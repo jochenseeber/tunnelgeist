@@ -78,17 +78,18 @@ The tests are written with microtest and come in three sets:
   themselves run as you, as any client does, and find the daemon's socket in
   `TUNNELGEIST_SOCKET`. `rake test:daemon` builds the daemon and the tests,
   runs `sudo -v` (the one password prompt) and writes the daemon's
-  configuration to `.work/root-config/config.json`, with `sudo install` so that
-  root owns the file and its directory, as the daemon requires. It names the
-  socket `.work/tunnelgeist.sock`, your primary group, and one client,
-  `daemon-test`, that allows addresses in `10.77.0.0/16` with peers there and
-  routes to `10.78.0.0/16` and `10.79.0.0/16`, and nothing else. The task
-  starts the daemon with
-  `sudo .work/tunnelgeist serve --config .work/root-config/config.json`, runs
-  the tests as you with `TUNNELGEIST_SOCKET` set, then stops the daemon and
-  removes the configuration and its directory with `sudo`, also when a step
-  failed, so that `rake clobber` can remove `.work`. A new daemon test that
-  needs another prefix widens that configuration in `rakelib/tunnelgeist.rake`.
+  configuration with `sudo` to
+  `/private/var/root/tunnelgeist-daemon-test/config.json`, in root's home. The
+  daemon reads its configuration only through directories root owns, and your
+  home directory is yours. The configuration names the socket
+  `.work/tunnelgeist.sock`, your primary group, and one client, `daemon-test`,
+  that allows addresses in `10.77.0.0/16` with peers there and routes to
+  `10.78.0.0/16` and `10.79.0.0/16`, and nothing else. The task starts the
+  daemon with `sudo .work/tunnelgeist serve --config PATH`, runs the tests as
+  you with `TUNNELGEIST_SOCKET` set, then stops the daemon and removes the
+  configuration and its directory with `sudo`, also when a step failed. A new
+  daemon test that needs another prefix widens that configuration in
+  `rakelib/tunnelgeist.rake`.
 
 A test that needs anything outside the project is an integration test, even
 when only one assertion of it does. Code is not given a test seam to keep a

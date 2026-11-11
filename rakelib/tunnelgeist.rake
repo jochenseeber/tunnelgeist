@@ -138,11 +138,15 @@ namespace "test" do
     FileUtils.mkdir_p(".work")
     daemon = File.join(".work", "tunnelgeist")
     socket = File.expand_path(File.join(".work", "tunnelgeist.sock"))
-    # The daemon runs as root and loads only a configuration that root owns
-    # in a directory root owns, so the file is written as the user and
-    # installed into a directory of its own with sudo.
-    config_directory = File.expand_path(File.join(".work", "root-config"))
+    # The daemon runs as root and reads only a configuration that root owns,
+    # through directories that root owns and no one else may write, from `/`
+    # down. A home directory belongs to its user, so the file is written here
+    # as the user and installed with sudo into a directory of its own in
+    # root's home, named by its `/private` path: `/var` is a symbolic link,
+    # which the daemon refuses.
+    config_directory = "/private/var/root/tunnelgeist-daemon-test"
     config = File.join(config_directory, "config.json")
+    config_made = false
     staged_config = File.join(".work", "root-config.json")
     binary = File.join(".work", "daemon-tests")
     group = `id -gn`.strip
@@ -169,6 +173,7 @@ namespace "test" do
           },
         ],
       ))
+      config_made = true
       sh "sudo", "install", "-d", "-o", "root", "-g", "wheel", "-m", "0755", config_directory
       sh "sudo", "install", "-o", "root", "-g", "wheel", "-m", "0644", staged_config, config
       FileUtils.rm_f(socket)
@@ -235,10 +240,10 @@ namespace "test" do
       end
     ensure
       # Root owns the configuration, so sudo removes it, also when writing it
-      # or starting the daemon failed, so that `rake clobber` can remove
-      # `.work` again.
+      # or starting the daemon failed. Only root may look into its home, so
+      # the directory counts as there once the task set out to make it.
       FileUtils.rm_f(staged_config)
-      if File.directory?(config_directory)
+      if config_made
         system("sudo", "rm", "-f", config)
         system("sudo", "rmdir", config_directory)
       end
