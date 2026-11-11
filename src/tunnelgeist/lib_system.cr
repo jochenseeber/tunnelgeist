@@ -3,8 +3,9 @@
 require "c/sys/types"
 
 module Tunnelgeist
-  # The macOS declarations the helper's peer check (UA8) and its socket setup
-  # need and the standard library's `LibC` lacks. Values from the macOS SDK
+  # The macOS declarations the helper's peer check (UA8), its socket setup
+  # and the configuration's ACL check need and the standard library's `LibC`
+  # lacks. Values from the macOS SDK
   # headers (`xcrun --show-sdk-path`, then `usr/include/...`), checked against a
   # C program built with that SDK: `SOL_LOCAL` is 0, `LOCAL_PEERTOKEN` 6,
   # `audit_token_t` 32 bytes and `uuid_t` 16.
@@ -13,6 +14,8 @@ module Tunnelgeist
     SOL_LOCAL = 0
     # The socket option that reads the peer's audit token (sys/un.h).
     LOCAL_PEERTOKEN = 6
+    # The kind of id `mbr_uuid_to_id` found: a uid (membership.h).
+    ID_TYPE_UID = 0
 
     # `audit_token_t` (mach/message.h): eight words that name a process,
     # including its pid version.
@@ -32,6 +35,9 @@ module Tunnelgeist
     fun mbr_uid_to_uuid(uid : ::LibC::UidT, uu : UInt8*) : ::LibC::Int
     fun mbr_gid_to_uuid(gid : ::LibC::GidT, uu : UInt8*) : ::LibC::Int
     fun mbr_check_membership(user : UInt8*, group : UInt8*, ismember : ::LibC::Int*) : ::LibC::Int
+    # The uid or gid a directory-service UUID names, with its kind in
+    # *id_type* (`ID_TYPE_UID` for a uid).
+    fun mbr_uuid_to_id(uu : UInt8*, uid_or_gid : ::LibC::IdT*, id_type : ::LibC::Int*) : ::LibC::Int
 
     # Sets the mode of *path* without following a symbolic link there
     # (sys/stat.h).

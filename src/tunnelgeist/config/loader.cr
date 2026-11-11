@@ -15,38 +15,44 @@ require "./document/value_type"
 require "./document/wrong_type"
 require "./error"
 require "./field_path"
-require "./file_guard"
 require "./location"
 require "./syntax_check"
+require "./trusted_directory"
+require "./trusted_directory/missing"
+require "./trusted_file"
 require "../config"
 
 module Tunnelgeist
   struct Config
     # Reads and validates a configuration (CA1): the main file and the files
-    # its includes name, each checked by `FileGuard` before it is read, then
-    # read into its `Document` type, which refuses unknown fields (CC1), and
-    # checked and turned into `Config`. Loading builds a new `Config` and
-    # changes nothing else, so a failure leaves whatever the caller holds
-    # untouched.
+    # its includes name, each opened and checked by `TrustedDirectory`
+    # through every directory from `/` down (RF5) and read from that
+    # descriptor, then read into its `Document` type, which refuses unknown
+    # fields (CC1), and checked and turned into `Config`. Loading builds a
+    # new `Config` and changes nothing else, so a failure leaves whatever
+    # the caller holds untouched.
     #
     # An error in a file's syntax or shape, which `SyntaxCheck` or the JSON
     # reader finds, names the line and column and the field path; one the
     # loader's checks find names the field path only.
     #
-    # An include entry is resolved against the main file's directory, and
-    # an absolute entry or one with `..` is followed wherever it leads: what
-    # makes an included file safe is `FileGuard`, which checks every file
-    # and the directory it sits in, but not the directories above that. Only
+    # A relative main path is taken relative to the working directory. A
+    # relative include entry is opened from the main file's checked
+    # directory, an absolute one walks from `/`; a `..` component is refused
+    # in either, and in the main path, since the walk only goes down. Only
     # the last path component of an entry may hold glob characters (`*`,
-    # `?`, `[`); it is matched against the names in its directory, so glob
-    # characters in the directory names never count, and hidden names match
-    # only a pattern that starts with a dot.
+    # `?`, `[`); it is matched against the names in its checked directory,
+    # so glob characters in the directory names never count, and hidden
+    # names match only a pattern that starts with a dot.
     class Loader
       # How `JSON::Serializable` starts the error about a missing field, the
       # one error of its own the loader words in its terms.
       MISSING_FIELD = "Missing JSON attribute: "
+      # Why a path with a `..` component is refused.
+      PARENT_COMPONENT = "must not contain a .. component"
 
-      # Loads the main file at *path*. Every file must be owned by *owner*.
+      # Loads the main file at *path*. Every file must be owned by *owner*,
+      # every directory above one by root or *owner*.
       # *find_user* returns the uid of a user name, nil for an unknown one;
       # *build_membership* resolves a group and *build_policy* compiles
       # signature requirements, each raising `ArgumentError` for what it
@@ -61,28 +67,54 @@ module Tunnelgeist
                      @build_policy : Array(String) -> SignaturePolicy = ->(requirements : Array(String)) {
                        SignaturePolicy.new(requirements)
                      })
+        @file = Loader.absolute(@path)
+      end
+
+      # *path* from `/`, relative to the working directory when it is
+      # relative, without empty and `.` components.
+      protected def self.absolute(path : String) : String
+        full = path.starts_with?('/') ? path : "#{Dir.current}/#{path}"
+        "/#{names(full).join('/')}"
+      end
+
+      # The components of *path*, without empty and `.` ones.
+      protected def self.names(path : String) : Array(String)
+        path.split('/').reject! { |name| name.empty? || name == "." }
       end
 
       # The configuration; raises `Config::Error` naming the file, and the
-      # field when there is one, for the first problem found.
+      # field when there is one, for the first problem found. A directory
+      # the walk refuses is named itself; a missing one makes the main file
+      # missing.
       def load : Config
-        main = read(Document::Main, file: @path)
-        socket = main.socket
-        check_socket(socket)
-        group = main.group
-        membership = looking_up(file: @path, field: "group") { @build_membership.call(group) }
-        included = resolve(main.includes)
+        names = Loader.names(@file)
+        raise Error.new(PARENT_COMPONENT, file: @file) if names.includes?("..")
+        name = names.pop? || raise Error.new("must be a regular file", file: @file)
 
-        names = {} of String => String
-        clients = main.clients.map_with_index do |document, index|
-          build_client(document, file: @path, at: FieldPath.element("clients", index), names: names)
-        end
-        included.each do |file|
-          clients << build_client(read(Document::Client, file: file), file: file, at: nil, names: names)
-        end
-        raise Error.new("no client configuration in the file or its includes", file: @path) if clients.empty?
+        TrustedDirectory.open(names, owner: @owner) do |directory|
+          main = parse(Document::Main, source: directory.read(name))
+          socket = main.socket
+          check_socket(socket)
+          group = main.group
+          membership = looking_up(file: @file, field: "group") { @build_membership.call(group) }
+          included = resolve(main.includes, directory: directory)
 
-        Config.new(socket: socket, group: membership.name, membership: membership, clients: clients)
+          clients_by_name = {} of String => String
+          clients = main.clients.map_with_index do |document, index|
+            build_client(document, file: @file, at: FieldPath.element("clients", index), names: clients_by_name)
+          end
+          included.each do |source|
+            clients << build_client(parse(Document::Client, source: source), file: source.path, at: nil,
+              names: clients_by_name)
+          end
+          raise Error.new("no client configuration in the file or its includes", file: @file) if clients.empty?
+
+          Config.new(socket: socket, group: membership.name, membership: membership, clients: clients)
+        end
+      rescue error : TrustedDirectory::Missing
+        # The includes name what they miss themselves, so this is the main
+        # file or a directory above it, and the path given is what to fix.
+        raise Error.new("does not exist", file: @file, cause: error)
       end
 
       # Refuses a *socket* path no client could find or the daemon could not
@@ -91,17 +123,17 @@ module Tunnelgeist
       # Checked at load, so `install` refuses it before it touches the
       # working daemon.
       private def check_socket(socket : String) : Nil
-        raise Error.new("socket must be an absolute path", file: @path, field: "socket") unless socket.starts_with?('/')
-        raise Error.new("socket contains a NUL byte", file: @path, field: "socket") if socket.includes?('\0')
+        raise Error.new("socket must be an absolute path", file: @file, field: "socket") unless socket.starts_with?('/')
+        raise Error.new("socket contains a NUL byte", file: @file, field: "socket") if socket.includes?('\0')
 
-        building(file: @path, field: "socket") { Socket::UNIXAddress.new(socket) }
+        building(file: @file, field: "socket") { Socket::UNIXAddress.new(socket) }
       end
 
-      # The *document* type read from *file*, after `FileGuard` and
-      # `SyntaxCheck` have passed it and its text is valid UTF-8.
-      private def read(document : T.class, *, file : String) : T forall T
-        FileGuard.check(file, owner: @owner)
-        text = File.read(file)
+      # The *document* type read from *source*, after `SyntaxCheck` has
+      # passed it and its text is valid UTF-8.
+      private def parse(document : T.class, *, source : TrustedFile) : T forall T
+        text = source.text
+        file = source.path
         # The lexer passes any bytes through in strings, and the checks of
         # names and paths raise on them.
         raise Error.new("not valid UTF-8", file: file) unless text.valid_encoding?
@@ -115,9 +147,7 @@ module Tunnelgeist
         end
         Document::ObjectConverter(T).new.from_json(pull)
       rescue error : JSON::ParseException
-        raise shape_error(error, file: file)
-      rescue error : File::Error
-        raise Error.new("cannot be read: #{error.os_error.try(&.message) || error.message}", file: file, cause: error)
+        raise shape_error(error, file: source.path)
       end
 
       # *error* of the reader of a document of *file* as a `Config::Error`
@@ -175,50 +205,71 @@ module Tunnelgeist
         first.rchop(" at line #{error.line_number}, column #{error.column_number}")
       end
 
-      # The files *includes* names, relative to the main file's directory, in
-      # order; the files of a glob sorted by name.
-      private def resolve(includes : Array(String)) : Array(String)
-        directory = File.dirname(@path)
-        files = [] of String
+      # The files *includes* names, relative to the main file's checked
+      # *directory*, in order; the files of a glob sorted by name.
+      private def resolve(includes : Array(String), *, directory : TrustedDirectory) : Array(TrustedFile)
+        files = [] of TrustedFile
         includes.each_with_index do |entry, index|
           files.concat(resolve_entry(entry, directory: directory, field: FieldPath.element("includes", index)))
         end
         files
       end
 
-      # The files the include *entry* names, resolved against *directory*;
-      # errors are about *field* of the main file, whatever the file system
-      # or a NUL byte raises included.
-      private def resolve_entry(entry : String, *, directory : String, field : String) : Array(String)
-        path = File.expand_path(entry, directory)
-        if glob?(File.dirname(entry))
-          raise Error.new("glob characters are allowed only in the last path component", file: @path, field: field)
-        elsif glob?(File.basename(entry))
-          matching(File.dirname(path), pattern: File.basename(path))
-        elsif File.info?(path, follow_symlinks: false)
-          [path]
-        else
-          raise Error.new("file #{path} does not exist", file: @path, field: field)
+      # The files the include *entry* names, read through *directory* when
+      # it is relative and from `/` when it is absolute. Errors about the
+      # entry itself are about *field* of the main file, a NUL byte
+      # included; those about what the walk opens name its path.
+      private def resolve_entry(entry : String, *, directory : TrustedDirectory, field : String) : Array(TrustedFile)
+        entry.check_no_null_byte
+        names = Loader.names(entry)
+        last = names.pop? || raise Error.new("must name a file", file: @file, field: field)
+        if names.any? { |name| glob?(name) }
+          raise Error.new("glob characters are allowed only in the last path component", file: @file, field: field)
+        elsif names.includes?("..") || last == ".."
+          raise Error.new(PARENT_COMPONENT, file: @file, field: field)
+        end
+
+        begin
+          if entry.starts_with?('/')
+            TrustedDirectory.open(names, owner: @owner) { |parent| read_entry(parent, name: last) }
+          else
+            directory.descend(names) { |parent| read_entry(parent, name: last) }
+          end
+        rescue error : TrustedDirectory::Missing
+          # A glob in a directory that is not there matches nothing.
+          raise Error.new("file #{included_path(entry, directory: directory)} does not exist", file: @file,
+            field: field, cause: error) unless glob?(last)
+          [] of TrustedFile
         end
       rescue error : ArgumentError
-        raise Error.new(error.message.to_s, file: @path, field: field, cause: error)
-      rescue error : File::Error
-        raise Error.new("cannot be resolved: #{error.message}", file: @path, field: field, cause: error)
+        raise Error.new(error.message.to_s, file: @file, field: field, cause: error)
       end
 
-      # The paths of the entries of *directory* whose names match the glob
-      # *pattern*, sorted by name. A hidden name matches only a pattern that
-      # starts with a dot, as in a shell; a missing directory matches
-      # nothing.
-      private def matching(directory : String, *, pattern : String) : Array(String)
-        names = begin
-          Dir.children(directory)
-        rescue File::NotFoundError
-          [] of String
+      # The file *name* in *parent*, or the files there whose names match
+      # the glob *name*, sorted by name. A hidden name matches only a
+      # pattern that starts with a dot, as in a shell.
+      private def read_entry(parent : TrustedDirectory, *, name : String) : Array(TrustedFile)
+        if glob?(name)
+          hidden = name.starts_with?('.')
+          matches = parent.names.select! { |child| (hidden || !child.starts_with?('.')) && File.match?(name, child) }
+          matches.sort!.compact_map { |child| read_match(parent, name: child) }
+        else
+          [parent.read(name)]
         end
-        hidden = pattern.starts_with?('.')
-        names.select! { |name| (hidden || !name.starts_with?('.')) && File.match?(pattern, name) }
-        names.sort!.map { |name| File.join(directory, name) }
+      end
+
+      # The file *name* a glob matched in *parent*; nil when it went away
+      # since the directory was listed, as if it had been listed after.
+      private def read_match(parent : TrustedDirectory, *, name : String) : TrustedFile?
+        parent.read(name)
+      rescue TrustedDirectory::Missing
+        nil
+      end
+
+      # The path the include *entry* names, for the error that it does not
+      # exist.
+      private def included_path(entry : String, *, directory : TrustedDirectory) : String
+        entry.starts_with?('/') ? Loader.absolute(entry) : Loader.absolute("#{directory.path}/#{entry}")
       end
 
       # Whether the include path part *text* is a glob: it holds `*`, `?`

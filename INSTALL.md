@@ -73,7 +73,10 @@ above those up to `/` must pass the same check, since another user could
 otherwise replace the program or the configuration. `install` refuses a
 `/usr/local` that a Homebrew installation gave to your user for that reason.
 `/etc` is a symbolic link to `/private/etc`, so name a configuration there as
-`--config /private/etc/tunnelgeist/config.json`.
+`--config /private/etc/tunnelgeist/config.json`. The daemon checks the same
+directories from `/` down each time it loads the configuration, the directories
+of the included files too, and also refuses one whose ACL lets anyone else
+write; see [Ownership](docs/configuration.md#ownership).
 
 ## Group membership
 

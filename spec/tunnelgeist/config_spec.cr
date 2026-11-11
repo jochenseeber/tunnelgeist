@@ -6,13 +6,13 @@ require "../../src/tunnelgeist/config"
 require "../../src/tunnelgeist/config/address_rule"
 require "../../src/tunnelgeist/config/document/main"
 require "../../src/tunnelgeist/config/error"
-require "../../src/tunnelgeist/config/file_guard"
 require "../../src/tunnelgeist/config/loader"
 require "../../src/tunnelgeist/config/location"
 require "../../src/tunnelgeist/signature_policy"
 require "./support/fake_membership"
 require "./support/fake_peer"
 require "./support/temporary_directory"
+require "./support/trusted_temporary_directory"
 
 # The client configuration (CF1 to CF4) and its loader (CA1, CC1, CC2),
 # against files in a temporary directory with stubbed user, group and
@@ -48,6 +48,7 @@ describe TunnelgeistConfig do
         @directory = name ? File.join(@root, name) : @root
         Dir.mkdir_p(@directory)
         File.chmod(@directory, 0o755)
+        TunnelgeistTrustedTemporaryDirectory.check_trusted(@directory, owner: owner)
       end
 
       # The uid that owns the directory.
@@ -552,6 +553,30 @@ describe TunnelgeistConfig do
       end
     end
 
+    test "load refuses a .. component in an include, before it opens anything" do
+      ["../c.json", "a/../c.json", "a/../*.json", "/a/../c.json", "a/.."].each do |entry|
+        with_fixture do |fixture|
+          fixture.write("config.json", content: main_json(extra: %(, "includes": ["#{entry}"])))
+          fixture.write("c.json", content: %({"name": "c"}))
+
+          error = load_error(fixture)
+
+          assert(error.message == "#{fixture.main}: field includes[0]: must not contain a .. component")
+        end
+      end
+    end
+
+    test "load refuses a .. component in the main path" do
+      with_fixture do |fixture|
+        fixture.write("config.json", content: main_json)
+        path = File.join(fixture.directory, "..", File.basename(fixture.directory), "config.json")
+
+        error = raised(Config::Error) { Lookups.new.loader(path, owner: fixture.owner).load }
+
+        assert(error.message == "#{path}: must not contain a .. component")
+      end
+    end
+
     test "load refuses an include with a NUL byte" do
       ["a\\u0000b.json", "c\\u0000/*.json"].each do |entry|
         with_fixture do |fixture|
@@ -808,19 +833,22 @@ describe TunnelgeistConfig do
         error = load_error(fixture)
 
         assert(error.file == fixture.directory)
-        assert(error.message == "#{fixture.directory}: must be writable only by its owner, not mode 0757")
+        assert(error.message == "#{fixture.directory}: directory must be writable only by its owner, not mode 0757")
       end
     end
 
-    test "load refuses a main file owned by another uid" do
+    test "load refuses a main file in a directory above which another uid owns" do
+      # The specs cannot give a file another owner; with another uid as the
+      # trusted owner, the first directory refused is the first one the uid
+      # running the specs owns, at the latest the fixture's own.
       with_fixture do |fixture|
         fixture.write("config.json", content: main_json)
         owner = fixture.owner + 1
 
         error = load_error(fixture, owner: owner)
 
-        assert(error.file == fixture.main)
-        assert(error.message == "#{fixture.main}: must be owned by uid #{owner}, not uid #{fixture.owner}")
+        assert(fixture.directory == error.file || fixture.directory.starts_with?("#{error.file}/"))
+        assert(error.reason == "directory must be owned by root or uid #{owner}, not uid #{fixture.owner}")
       end
     end
 
@@ -839,6 +867,16 @@ describe TunnelgeistConfig do
     test "load refuses a main file that does not exist" do
       with_fixture do |fixture|
         assert(load_error(fixture).message == "#{fixture.main}: does not exist")
+      end
+    end
+
+    test "load names the main file as missing when a directory above it does not exist" do
+      with_fixture do |fixture|
+        path = File.join(fixture.directory, "missing", "config.json")
+
+        error = raised(Config::Error) { Lookups.new.loader(path, owner: fixture.owner).load }
+
+        assert(error.message == "#{path}: does not exist")
       end
     end
 
@@ -868,24 +906,15 @@ describe TunnelgeistConfig do
       end
     end
 
-    test "FileGuard.check accepts a file and directory the owner alone can write" do
-      with_fixture do |fixture|
-        path = fixture.write("config.json", content: main_json)
-
-        assert(Config::FileGuard.check(path, owner: fixture.owner).nil?)
-      end
-    end
-
-    test "FileGuard.check refuses a symbolic link in place of the directory" do
+    test "load refuses a symbolic link in place of a directory above the main file" do
       with_fixture do |fixture|
         fixture.write("real/config.json", content: main_json)
         link = File.join(fixture.directory, "link")
         File.symlink(File.join(fixture.directory, "real"), link)
 
-        error = raised(Config::Error) do
-          Config::FileGuard.check(File.join(link, "config.json"), owner: fixture.owner)
-        end
+        error = raised(Config::Error) { Lookups.new.loader(File.join(link, "config.json"), owner: fixture.owner).load }
 
+        assert(error.file == link)
         assert(error.message == "#{link}: must be a directory, not a symbolic link")
       end
     end

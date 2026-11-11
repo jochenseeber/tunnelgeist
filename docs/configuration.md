@@ -147,19 +147,43 @@ directory. Only the last path component may hold the glob characters `*`, `?`
 and `[`; a glob's files are read in name order, a name starting with `.`
 matches only a pattern that starts with `.`, and a glob that matches nothing,
 or whose directory does not exist, is not an error. A path without glob
-characters must exist. An absolute entry or one with `..` is followed wherever
-it leads; such a file and its directory pass the same check as every other
-file.
+characters must exist. An absolute entry is opened from `/`. An entry with a
+`..` component is refused, and so is a main path with one: the daemon opens
+each file by going down from a checked directory, never up (see
+[Ownership](#ownership)).
 
 ## Ownership
 
-The daemon runs as root, so a configuration file another user could change
-would let that user widen what root does. Every file, the main one and each
-included one, must be a regular file and its directory a directory, neither a
-symbolic link, both owned by the user the daemon runs as (root under launchd)
-and writable by no one else. The directories above are not checked; keep them
-root's. The `clients.d` directory `install` creates is owned by root:wheel with
-mode 0755, so a program's file goes there with `sudo`:
+The daemon runs as root, so a configuration file another user could change or
+replace would let that user widen what root does. It opens every file, the main
+one and each included one, by going down from `/` one directory at a time, and
+checks each directory it opens before it opens the next name in it:
+
+- every directory from `/` down to the file must be a directory, not a symbolic
+  link, owned by root or the user the daemon runs as, and writable by neither
+  its group nor others;
+- the file must be a regular file, not a symbolic link, owned by the user the
+  daemon runs as (root under launchd), writable by neither its group nor
+  others, and at most 1 MiB;
+- no directory and not the file may have an ACL entry that allows anyone but
+  its owner, a group included, to write, append, change its attributes,
+  extended attributes, permissions or owner, delete it, or, on a directory, add
+  a file or subdirectory or delete what it holds. An entry the object inherited
+  counts like its own; entries that deny, or that allow only reading or
+  listing, are fine.
+
+The daemon reads the file from the descriptor it checked, so nothing swapped in
+along the path between the check and the read is read. A refused directory is
+named in the error, as in
+`/usr/local/etc: directory must be writable only by its owner, not mode 0775`
+or `/usr/local/etc/tunnelgeist/clients.d: grants write access through its ACL`.
+`/etc` and `/var` are symbolic links to `/private/etc` and `/private/var`, so
+name a configuration there by its `/private` path. A relative `--config` path
+is taken from the working directory, whose directories pass the same checks.
+
+`ls -le` shows a file's ACL and `chmod -N` removes it. The `clients.d`
+directory `install` creates is owned by root:wheel with mode 0755, so a
+program's file goes there with `sudo`:
 
 ```sh
 sudo install -o root -g wheel -m 0644 vpn.json /usr/local/etc/tunnelgeist/clients.d/

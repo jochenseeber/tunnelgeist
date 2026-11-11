@@ -4,19 +4,20 @@ require "../../src/tunnelgeist/config"
 require "../../src/tunnelgeist/config/address_rule"
 require "../../src/tunnelgeist/config/client"
 require "../../src/tunnelgeist/config/error"
-require "../../src/tunnelgeist/config/file_guard"
 require "../../src/tunnelgeist/config/loader"
 require "../../src/tunnelgeist/lib_system"
 require "../../src/tunnelgeist/membership"
 require "../../src/tunnelgeist/signature_policy"
 require "../../src/tunnelgeist/signature_policy/inspection"
 require "./support/own_peer"
+require "../../spec/tunnelgeist/support/trusted_temporary_directory"
 require "./support/temporary_directory"
 
 # The configuration loader and the client configuration (CA1, CC2, CF4) with
 # what the unit specs stub: the system's users and groups (every macOS user is
 # in `staff`, nobody in `nogroup`), Security on this ad-hoc signed process,
-# the effective uid and the root-owned `/private/tmp`.
+# the effective uid, ACLs set with `/bin/chmod +a`, the world-writable
+# `/private/tmp` and the directories above the temporary directory.
 describe TunnelgeistConfig do
   {% if flag?(:darwin) %}
     include TunnelgeistOwnPeer
@@ -38,6 +39,16 @@ describe TunnelgeistConfig do
       File.write(path, content)
       File.chmod(path, 0o644)
       path
+    end
+
+    # Runs the block with a new temporary directory the configuration walk
+    # accepts, mode 0755.
+    def with_trusted_directory(&)
+      with_temporary_directory do |directory|
+        File.chmod(directory, 0o755)
+        TunnelgeistTrustedTemporaryDirectory.check_trusted(directory, owner: Tunnelgeist::LibSystem.geteuid)
+        yield directory
+      end
     end
 
     # A loader of *path* with the system's user lookup and every group
@@ -105,10 +116,8 @@ describe TunnelgeistConfig do
         begin
           error = raised(Config::Error) { staff_loader(main).load }
 
-          assert(error.file == main)
-          assert(error.field == "includes[0]")
-          assert(error.reason.starts_with?("cannot be resolved: "))
-          assert(error.reason.ends_with?("Permission denied"))
+          assert(error.file == locked)
+          assert(error.message == "#{locked}: cannot be opened: Permission denied")
         ensure
           File.chmod(locked, 0o755)
         end
@@ -126,23 +135,83 @@ describe TunnelgeistConfig do
       end
     end
 
-    test "FileGuard.check refuses a file the owner owns in a directory another uid owns" do
-      # A directory of another owner needs chown, so this uses the system's
-      # root-owned /private/tmp, whose owner the guard checks before its mode.
-      euid = Tunnelgeist::LibSystem.geteuid
-      if euid == 0
-        skip "root owns /private/tmp"
-      end
-      path = File.join("/private/tmp", "tg-config-#{Random::Secure.hex(4)}.json")
-      File.write(path, "{}")
-      File.chmod(path, 0o644)
-      begin
-        error = raised(Config::Error) { Config::FileGuard.check(path, owner: euid) }
+    test "load refuses a main file in /private/tmp, which everyone may write" do
+      error = raised(Config::Error) { staff_loader("/private/tmp/tunnelgeist-config.json").load }
 
-        assert(error.file == "/private/tmp")
-        assert(error.message == "/private/tmp: must be owned by uid #{euid}, not uid 0")
-      ensure
-        File.delete(path)
+      assert(error.file == "/private/tmp")
+      assert(error.message == "/private/tmp: directory must be writable only by its owner, not mode 1777")
+    end
+
+    test "load reads relative, absolute and glob includes through checked directories" do
+      with_trusted_directory do |directory|
+        main = write(directory, name: "etc/config.json", content: %({"socket": "/var/run/tg.sock", "group": "tg",
+          "includes": ["more/one.json", "#{directory}/abs/two.json", "./clients.d/*.json"]}))
+        write(directory, name: "etc/more/one.json", content: %({"name": "one"}))
+        write(directory, name: "abs/two.json", content: %({"name": "two"}))
+        write(directory, name: "etc/clients.d/b.json", content: %({"name": "b"}))
+        write(directory, name: "etc/clients.d/a.json", content: %({"name": "a"}))
+
+        assert(staff_loader(main).load.clients.map(&.name) == ["one", "two", "a", "b"])
+      end
+    end
+
+    test "load refuses an include below a directory the walk refuses, naming that directory" do
+      with_trusted_directory do |directory|
+        main = write(directory, name: "config.json", content: %({"socket": "/var/run/tg.sock", "group": "tg",
+          "includes": ["clients.d/*.json"]}))
+        included = write(directory, name: "clients.d/a.json", content: %({"name": "a"}))
+        File.chmod(File.dirname(included), 0o775)
+
+        error = raised(Config::Error) { staff_loader(main).load }
+
+        assert(error.message == "#{File.dirname(included)}: directory must be writable only by its owner, not mode 0775")
+      end
+    end
+
+    test "load refuses an absolute include in /private/tmp, walking to it from /" do
+      with_trusted_directory do |directory|
+        main = write(directory, name: "config.json", content: %({"socket": "/var/run/tg.sock", "group": "tg",
+          "clients": [{"name": "c"}], "includes": ["/private/tmp/*.json"]}))
+
+        error = raised(Config::Error) { staff_loader(main).load }
+
+        assert(error.message == "/private/tmp: directory must be writable only by its owner, not mode 1777")
+      end
+    end
+
+    test "load refuses a .. component in an include" do
+      with_trusted_directory do |directory|
+        main = write(directory, name: "etc/config.json", content: %({"socket": "/var/run/tg.sock", "group": "tg",
+          "includes": ["../c.json"]}))
+        write(directory, name: "c.json", content: %({"name": "c"}))
+
+        error = raised(Config::Error) { staff_loader(main).load }
+
+        assert(error.message == "#{main}: field includes[0]: must not contain a .. component")
+      end
+    end
+
+    test "load refuses an included file whose ACL lets everyone write" do
+      with_trusted_directory do |directory|
+        main = write(directory, name: "config.json", content: %({"socket": "/var/run/tg.sock", "group": "tg",
+          "includes": ["c.json"]}))
+        included = write(directory, name: "c.json", content: %({"name": "c"}))
+        status = Process.run("/bin/chmod", ["+a", "everyone allow write", included], error: Process::Redirect::Inherit)
+        raise "chmod +a #{included} failed" unless status.success?
+
+        error = raised(Config::Error) { staff_loader(main).load }
+
+        assert(error.message == "#{included}: grants write access through its ACL")
+      end
+    end
+
+    test "load refuses a main file over 1 MiB" do
+      with_trusted_directory do |directory|
+        main = write(directory, name: "config.json", content: " " * 1_048_577)
+
+        error = raised(Config::Error) { staff_loader(main).load }
+
+        assert(error.message == "#{main}: must be at most 1 MiB (1048576 bytes)")
       end
     end
 
