@@ -183,15 +183,16 @@ task "exercise" => "prepare" do
   sh "sudo", "-v"
   begin
     # The tests' networks, not just their addresses: 10.77.0.0/16 holds
-    # their address 10.77.3.1/24 and its peer 10.77.3.2, and the routes they
-    # add lie in 10.78.0.0/16 and 10.79.0.0/16. Anything outside is refused.
+    # their address 10.77.3.1/24 and its peer 10.77.3.2, fd77::/48 their
+    # IPv6 address fd77::1/64, and the routes they add lie in 10.78.0.0/16
+    # and 10.79.0.0/16. Anything outside is refused.
     File.write(staged_config, JSON.pretty_generate(
       "socket" => socket,
       "group" => group,
       "clients" => [
         {
           "name" => "daemon-test",
-          "addresses" => [{ "network" => "10.77.0.0/16", "peer" => "10.77.0.0/16" }],
+          "addresses" => [{ "network" => "10.77.0.0/16", "peer" => "10.77.0.0/16" }, { "network" => "fd77::/48" }],
           "routes" => ["10.78.0.0/16", "10.79.0.0/16"],
         },
       ],

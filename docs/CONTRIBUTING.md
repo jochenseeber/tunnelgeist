@@ -70,20 +70,21 @@ The tests are written with microtest and come in three sets:
   nothing on the system.
 - The daemon tests in `test/daemon/`, run by `rake exercise` and by nothing
   else. A `Tunnelgeist::Client` asks a real daemon for utun devices, and the
-  tests read the ICMP echo request of `ping -c1 -t2 10.77.3.2` from
-  `device.fd`, check the routes the daemon adds and removes, and check that
-  closing the device removes it, that a new device of a closed one's name is
-  changed with its own descriptor, that a change sent as the client closes the
-  device's last descriptor lands on that device and not on the next device of
-  its name, that the daemon refuses a change sent with another device's
-  descriptor and a second address with the same local address, that it refuses
-  an address and a route its configuration does not allow (`10.99.0.1/24`,
-  `10.99.0.0/16`) without creating a device, and that it keeps at most 16
-  devices of one user. Each test waits for the interfaces of its devices to go
-  before the next one starts. They need macOS and root for the daemon only; the
-  tests themselves run as you, as any client does, and find the daemon's socket
-  in `TUNNELGEIST_SOCKET`. `rake exercise` builds the daemon and the tests,
-  runs `sudo -v` (the one password prompt) and writes the daemon's
+  tests read the ICMP echo request of `ping -c1 -t2 10.77.3.2` from `device.fd`,
+  check the routes the daemon adds and removes, and check that closing the
+  device removes it, that a new device of a closed one's name is changed with
+  its own descriptor, that a change sent as the client closes the device's last
+  descriptor lands on that device and not on the next device of its name, that
+  the daemon refuses a change sent with another device's descriptor and a second
+  address with the same local address, that it refuses an address and a route
+  its configuration does not allow (`10.99.0.1/24`, `10.99.0.0/16`) without
+  creating a device, that it keeps at most 16 devices of one user, and that none
+  of 60 devices created in a row reads end of file from the start, while Unix
+  socket pairs are closed meanwhile. Each test waits for the interfaces of its
+  devices to go before the next one starts. They need macOS and root for the
+  daemon only; the tests themselves run as you, as any client does, and find the
+  daemon's socket in `TUNNELGEIST_SOCKET`. `rake exercise` builds the daemon and
+  the tests, runs `sudo -v` (the one password prompt) and writes the daemon's
   configuration with `sudo` to
   `/private/var/root/tunnelgeist-daemon-test-HASH/config.json`, in root's home,
   where `HASH` is the first 8 hex digits of the SHA-256 of the checkout's real
@@ -91,13 +92,13 @@ The tests are written with microtest and come in three sets:
   configuration only through directories root owns, and your home directory is
   yours. The configuration names the socket `.work/tunnelgeist.sock`, your
   primary group, and one client, `daemon-test`, that allows addresses in
-  `10.77.0.0/16` with peers there and routes to `10.78.0.0/16` and
-  `10.79.0.0/16`, and nothing else. The task starts the daemon with
-  `sudo -n .work/tunnelgeist serve --config PATH`, its standard input the null
-  device and its standard output and error going to
+  `10.77.0.0/16` with peers there, IPv6 addresses in `fd77::/48` and routes to
+  `10.78.0.0/16` and `10.79.0.0/16`, and nothing else. The task starts the
+  daemon with `sudo -n .work/tunnelgeist serve --config PATH`, its standard
+  input the null device and its standard output and error going to
   `$TMPDIR/tunnelgeist-exercise-HASH-TIME.log`, whose path it prints and keeps,
-  runs the tests as you with `TUNNELGEIST_SOCKET` set, then stops the daemon
-  and removes the configuration and its directory with `sudo`, also when a step
+  runs the tests as you with `TUNNELGEIST_SOCKET` set, then stops the daemon and
+  removes the configuration and its directory with `sudo`, also when a step
   failed, and warns when it cannot. A new daemon test that needs another prefix
   widens that configuration in `rakelib/tunnelgeist.rake`.
 

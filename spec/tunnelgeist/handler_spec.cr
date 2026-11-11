@@ -108,6 +108,7 @@ describe TunnelgeistHandler do
       end
 
       def handler(request_timeout : Time::Span = Protocol::REQUEST_TIMEOUT,
+                  close_timeout : Time::Span = Protocol::REQUEST_TIMEOUT,
                   max_connections_per_user : Int32 = Tunnelgeist::Handler::MAX_CONNECTIONS_PER_USER) : Tunnelgeist::Handler
         Tunnelgeist::Handler.new(registry,
           create_device: ->(name : Tunnelgeist::InterfaceName?, mtu : Int32) { create_device(name, mtu: mtu) },
@@ -116,6 +117,7 @@ describe TunnelgeistHandler do
           group: "tunnelgeist",
           interface_index: ->(name : Tunnelgeist::InterfaceName) { @indexes[name]? || 0_u32 },
           request_timeout: request_timeout,
+          close_timeout: close_timeout,
           drain_departures: -> { record_drain },
           descriptor_name: ->(fd : Int32) { descriptor_name(fd) },
           max_connections_per_user: max_connections_per_user,
@@ -236,18 +238,22 @@ describe TunnelgeistHandler do
     end
 
     # Sends *request* (when given) with the descriptors *fds* in one
-    # message, runs the handler on the other end and returns the reply and
-    # the descriptor that came with it. The handler's socket must be closed
-    # afterwards.
+    # message, runs the handler on the other end in a fiber, reads the reply
+    # and closes the client's end, as the client does, and returns the reply
+    # and the descriptor that came with it. The handler must return promptly
+    # then, its socket closed.
     def exchange(fixture : HandlerFixture, *, request : String?, fds : Array(Int32) = [] of Int32, handler = fixture.handler,
                  & : UNIXSocket ->) : ReplyExchange
       client, server = UNIXSocket.pair
       begin
         send_many(client, data: request.to_slice, fds: fds) if request
         yield client
-        handler.handle(server)
+        served = later { handler.handle(server) }
+        exchanged = read_reply(client)
+        client.close
+        awaited(served)
         assert(server.closed?)
-        read_reply(client)
+        exchanged
       ensure
         client.close
       end
@@ -303,12 +309,13 @@ describe TunnelgeistHandler do
 
       client, server = UNIXSocket.pair
       client.write(line(request).to_slice)
-      fixture.handler.handle(server)
+      served = later { fixture.handler.handle(server) }
+      exchanged = read_reply(client)
+      client.close
+      awaited(served)
       assert(server.closed?)
       assert(fixture.device_fds.size == 1)
       assert(closed?(fixture.device_fds[0]))
-      exchanged = read_reply(client)
-      client.close
       reply = exchanged.reply
       fd = exchanged.fd
 
@@ -328,6 +335,58 @@ describe TunnelgeistHandler do
         assert(recorded?(fixture, item: route("fd99::/48")))
         assert(fixture.logged?("op=create name=utun9"))
       ensure
+        fd.try { |descriptor| LibC.close(descriptor) }
+      end
+    end
+
+    # Darwin flushes a descriptor in flight that only messages refer to when
+    # a Unix socket closes meanwhile, so the handler's copy and the
+    # connection stay open until the client has received the descriptor and
+    # closed its end.
+    test "after a create's reply the handler holds the descriptor and the connection until the client closes its end" do
+      fixture = HandlerFixture.new
+      client, server = UNIXSocket.pair
+      fd = nil
+      begin
+        client.write(line(empty_create).to_slice)
+        served = later { fixture.handler.handle(server) }
+        fd = read_reply(client).fd
+        # The handler's fiber runs on to its wait meanwhile.
+        sleep 20.milliseconds
+
+        assert(fd)
+        assert(!server.closed?)
+        assert(!closed?(fixture.device_fds[0]))
+
+        client.close
+        awaited(served)
+
+        assert(server.closed?)
+        assert(closed?(fixture.device_fds[0]))
+        assert(!fixture.logged?("did not close"))
+      ensure
+        client.close
+        fd.try { |descriptor| LibC.close(descriptor) }
+      end
+    end
+
+    test "a client that does not close after a create's reply has its connection closed after the close timeout, with a warning" do
+      fixture = HandlerFixture.new
+      client, server = UNIXSocket.pair
+      fd = nil
+      begin
+        client.write(line(empty_create).to_slice)
+        served = later { fixture.handler(close_timeout: 50.milliseconds).handle(server) }
+        fd = read_reply(client).fd
+        awaited(served)
+
+        assert(fd)
+        assert(server.closed?)
+        assert(closed?(fixture.device_fds[0]))
+        assert(fixture.registry.with_entry(UTUN9, &.index) == 21_u32)
+        assert(fixture.logged?("op=create name=utun9 client did not close the connection within 0.05 seconds"))
+      ensure
+        client.close
         fd.try { |descriptor| LibC.close(descriptor) }
       end
     end

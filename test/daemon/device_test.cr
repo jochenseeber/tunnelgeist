@@ -12,6 +12,9 @@ require "../../src/tunnelgeist/lib_system"
 
 describe TunnelgeistDaemon do
   {% if flag?(:darwin) %}
+    # `recv` flag: return at once when nothing is queued (sys/socket.h).
+    MSG_DONTWAIT = 0x80
+
     @files = {} of Int32 => IO::FileDescriptor
     @names = [] of Tunnelgeist::InterfaceName
 
@@ -168,6 +171,41 @@ describe TunnelgeistDaemon do
       assert(interface?(fresh.name))
     end
 
+    # A device whose descriptor Darwin's collector of descriptors in flight
+    # (`unp_gc`) took for garbage on its way from the daemon has its receive
+    # side flushed: every read returns end of file at once, for good, and no
+    # packet arrives. Any close of a Unix socket on the system may start the
+    # collector, so a fiber closes socket pairs meanwhile; the daemon keeps
+    # its copy of the descriptor until the client has received it, which
+    # keeps it from being taken. A daemon that closed its copy at once gave
+    # out such a device in about one create of thirty. A deaf device shows
+    # it on the first read, so each device is read once, without waiting.
+    test "none of 60 devices created in a row reads end of file from the start" do
+      count = 60
+      churning = true
+      spawn do
+        while churning
+          50.times { UNIXSocket.pair.each(&.close) }
+          sleep 1.millisecond
+        end
+      end
+      deaf = [] of String
+      begin
+        count.times do
+          device = create_device(addresses: [ipv4_address("10.77.6.1", peer: "10.77.6.2"), ipv6_address("fd77::1")],
+            routes: [] of Tunnelgeist::Prefix)
+          deaf << device.name.to_s if deaf?(device)
+          open_device(device).close
+          wait_until_gone(device.name)
+        end
+      ensure
+        churning = false
+      end
+
+      puts "deaf devices: #{deaf.size} of #{count}#{deaf.empty? ? "" : " (#{deaf.join(", ")})"}"
+      assert(deaf.empty?)
+    end
+
     test "the daemon refuses an address outside its configuration and creates no device" do
       address = Tunnelgeist::Address.new(
         Socket::IPAddress.new("10.99.0.1", 0), prefix: 24, peer: Socket::IPAddress.new("10.99.0.2", 0))
@@ -316,6 +354,20 @@ describe TunnelgeistDaemon do
     # The IPv4 address *local*/24 with the peer *peer*.
     def ipv4_address(local : String, *, peer : String) : Tunnelgeist::Address
       Tunnelgeist::Address.new(Socket::IPAddress.new(local, 0), prefix: 24, peer: Socket::IPAddress.new(peer, 0))
+    end
+
+    # The IPv6 address *local*/64, inside the IPv6 address rule of the
+    # configuration `rake exercise` writes.
+    def ipv6_address(local : String) : Tunnelgeist::Address
+      Tunnelgeist::Address.new(Socket::IPAddress.new(local, 0), prefix: 64)
+    end
+
+    # Whether a read of the device's descriptor returns end of file at once:
+    # its receive side was flushed. A device that can receive has nothing to
+    # read yet or a frame of the kernel's IPv6 housekeeping.
+    def deaf?(device : Tunnelgeist::Client::Device) : Bool
+      byte = Bytes.new(1)
+      LibC.recv(device.fd, byte, 1, MSG_DONTWAIT) == 0
     end
 
     # Whether `route -n get` sends *destination* out of the interface *name*.

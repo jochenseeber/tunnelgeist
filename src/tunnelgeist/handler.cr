@@ -23,9 +23,11 @@ module Tunnelgeist
   # one request line with the descriptors that came with it, judges its
   # addresses and routes by the client configurations that apply to the
   # peer (CA3), creates a device or changes one, writes one reply and closes
-  # the connection. A change must carry the device's descriptor, which the
-  # handler holds while it changes the device (RF1.1 to RF1.3). Its
-  # collaborators are injected so the specs can replace them.
+  # the connection; after a create's ok reply it first waits for the client
+  # to close its end, holding its copy of the device's descriptor until
+  # then. A change must carry the device's descriptor, which the handler
+  # holds while it changes the device (RF1.1 to RF1.3). Its collaborators
+  # are injected so the specs can replace them.
   #
   # `handle` never raises: the daemon runs it in one fiber per connection
   # and a client error must not stop it. Every failure becomes an error
@@ -54,7 +56,9 @@ module Tunnelgeist
     # *admit* answers which client configurations apply to a peer; the
     # daemon passes `Authorizer#admit`. *group* is the main group, named in
     # the refusal. *request_timeout* is how long a client may take to send
-    # its request line. *drain_departures* runs after a new device is
+    # its request line. *close_timeout* is how long it waits, after a
+    # create's ok reply, for the client to close its end of the connection.
+    # *drain_departures* runs after a new device is
     # configured and before it is registered; the daemon passes
     # `DepartureWatcher#drain`, so a departure event about the previous
     # owner of a recycled name cannot remove the new entry.
@@ -70,6 +74,7 @@ module Tunnelgeist
                    group : String,
                    @interface_index : InterfaceName -> UInt32 = ->(name : InterfaceName) { LibC.if_nametoindex(name.to_s) },
                    @request_timeout : Time::Span = Protocol::REQUEST_TIMEOUT,
+                   @close_timeout : Time::Span = Protocol::REQUEST_TIMEOUT,
                    @drain_departures : -> Nil = -> { },
                    @descriptor_name : Int32 -> InterfaceName = ->(fd : Int32) { Device.name_of(fd) },
                    @max_connections_per_user : Int32 = MAX_CONNECTIONS_PER_USER,
@@ -297,7 +302,9 @@ module Tunnelgeist
 
     # Creates the device of *request* in the slot of *reservation*, as
     # `create` says. A failed reply removes the registered device again,
-    # which frees its slot.
+    # which frees its slot. After the ok reply the handler keeps its copy of
+    # the descriptor until the client has closed its end of the connection
+    # (`await_client_close`).
     private def create_reserved(socket : UNIXSocket, *, peer : Peer, request : Protocol::Create,
                                 reservation : Registry::Reservation) : Nil
       device = @create_device.call(request.name, request.mtu)
@@ -312,17 +319,49 @@ module Tunnelgeist
         return
       end
 
-      begin
+      sent = begin
         FdPassing.send(socket, data: reply_bytes(Protocol::Reply.new(ok: true, name: name)), fd: fd)
         @log.info { "#{describe_peer(peer)} op=create name=#{name} ok" }
+        true
       rescue error
         # The client never got the descriptor, so nobody can change the
         # device, and closing it below removes the interface.
         @registry.remove(name)
         @log.warn { "#{describe_peer(peer)} op=create name=#{name} failed: reply not sent: #{error.message}" }
+        false
+      end
+
+      begin
+        await_client_close(socket, peer: peer, name: name) if sent
       ensure
         LibC.close(fd)
       end
+    end
+
+    # Waits until the client has closed its end of *socket*, at most
+    # `close_timeout` in all, discarding whatever it sends meanwhile; a
+    # wait that runs out is logged at warn. The client closes only after it
+    # has received the descriptor of the device *name*, so the handler's
+    # copy keeps the descriptor open while it is in flight. Darwin's
+    # collector of descriptors in flight (`unp_gc`), which any close of a
+    # Unix socket on the system may start, takes a descriptor that only
+    # messages in flight refer to for garbage and flushes its socket's
+    # receive side: the client would get a device that reads end of file
+    # for good.
+    private def await_client_close(socket : UNIXSocket, *, peer : Peer, name : InterfaceName) : Nil
+      deadline = Time.instant + @close_timeout
+      buffer = Bytes.new(64)
+      loop do
+        remaining = deadline - Time.instant
+        raise IO::TimeoutError.new("close deadline") unless remaining.positive?
+
+        socket.read_timeout = remaining
+        break if socket.read(buffer) == 0
+      end
+    rescue IO::TimeoutError
+      @log.warn { "#{describe_peer(peer)} op=create name=#{name} client did not close the connection within #{@close_timeout.total_seconds} seconds" }
+    rescue IO::Error
+      # A reset connection is closed as well.
     end
 
     # Runs the commands for a new device *name*, drains the departure

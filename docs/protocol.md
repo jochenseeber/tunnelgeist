@@ -8,7 +8,9 @@ this document is all a client in another language needs.
 ## Transport
 
 The daemon listens on the Unix stream socket `/var/run/tunnelgeist.sock`. A
-connection carries one request and one reply, then closes.
+connection carries one request and one reply, then closes; after a `create`
+that succeeds, the daemon first waits for the client to close its end (see
+[create](#create)).
 
 - A request is one line of JSON in UTF-8, ended by a newline, at most 64 KiB
   (65,536 bytes). A longer line, or one that is not valid UTF-8, gets an error
@@ -123,11 +125,18 @@ Reply:
 ```
 
 The reply carries the open device as one file descriptor, attached to the same
-message as `SCM_RIGHTS` ancillary data. The daemon closes its own copy
-afterwards. The descriptor is blocking and the daemon sets close-on-exec on its
-own copy only: setting close-on-exec on the received descriptor is the client's
-job. If any step fails, the daemon closes the descriptor, which removes the
-interface, registers nothing and replies with an error and no descriptor.
+message as `SCM_RIGHTS` ancillary data. The daemon keeps its own copy, and the
+connection, open until the client closes its end of the connection, at most 5
+seconds, then closes both. A client closes the connection once it has received
+the reply. While the descriptor is in flight, the daemon's copy is what keeps
+macOS from taking it for garbage: the kernel's collector of descriptors in
+flight, which any close of a Unix socket on the system may start, flushes the
+receive side of a descriptor that only messages in flight refer to, and the
+client would get a device that reads end of file for good. The descriptor is
+blocking and the daemon sets close-on-exec on its own copy only: setting
+close-on-exec on the received descriptor is the client's job. If any step fails,
+the daemon closes the descriptor, which removes the interface, registers nothing
+and replies with an error and no descriptor.
 
 ### add_address and remove_address
 
