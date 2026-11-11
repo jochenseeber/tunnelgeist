@@ -4,6 +4,7 @@ require "../../../src/tunnelgeist/config/error"
 require "../../../src/tunnelgeist/config/file_status"
 require "../../../src/tunnelgeist/config/trust_policy"
 require "../../../src/tunnelgeist/config/trusted_file"
+require "./outside_temporary_directory"
 
 # A configuration directory for the specs of the loader. It applies
 # `TrustPolicy` to what `File.info` says about each file and each directory
@@ -39,7 +40,7 @@ class TunnelgeistFakeDirectory < Tunnelgeist::Config::Directory
       check_directory(path) if below_base?(path)
     end
     unless path == @base || below_base?(path)
-      raise ArgumentError.new("the fake directory serves only #{@base} and below, not #{path}")
+      raise TunnelgeistOutsideTemporaryDirectory.new("the fake directory serves only #{@base} and below, not #{path}")
     end
     TunnelgeistFakeDirectory.new(path, owner: @owner, statuses: @statuses, base: @base)
   end

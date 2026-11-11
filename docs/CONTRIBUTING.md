@@ -264,9 +264,11 @@ the handler, the server, the client and the configuration holder,
 `registrations.cr` registers devices with a reservation, `server_runs.cr` runs
 a server in a fiber and asks it as a client, `temporary_directory.cr` makes the
 temporary directories, and `fake_directory.cr` stands in for the checked
-directories the configuration loader reads through. A spec reads fixtures from
-the project itself, such as `examples/config` and `docs/protocol.md`, and
-writes only below its temporary directory.
+directories the configuration loader reads through and raises the error of
+`outside_temporary_directory.cr` when a spec asks it for one outside the
+temporary directory. A spec reads fixtures from the project itself, such as
+`examples/config` and `docs/protocol.md`, and writes only below its temporary
+directory.
 
 `test/test_helper.cr` does the same for the integration tests in
 `test/tunnelgeist/`, named `*_test.cr` after the spec of the same source file;

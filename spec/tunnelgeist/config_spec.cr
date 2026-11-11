@@ -12,6 +12,7 @@ require "../../src/tunnelgeist/config/location"
 require "../../src/tunnelgeist/signature_policy"
 require "./support/fake_directory"
 require "./support/fake_membership"
+require "./support/outside_temporary_directory"
 require "./support/fake_peer"
 require "./support/temporary_directory"
 
@@ -616,6 +617,16 @@ describe TunnelgeistConfig do
 
           assert(error.message == expected.sub("%s", fixture.directory).sub("%m", fixture.main))
         end
+      end
+    end
+
+    test "load does not turn a fake directory asked for a path outside the temporary directory into a refusal" do
+      with_fixture do |fixture|
+        fixture.write("config.json", content: main_json(extra: %(, "includes": ["/tunnelgeist-outside.json"])))
+
+        error = raised(TunnelgeistOutsideTemporaryDirectory) { load(fixture) }
+
+        assert(error.message.to_s.ends_with?("and below, not /"))
       end
     end
 
