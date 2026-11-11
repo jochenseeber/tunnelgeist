@@ -26,7 +26,7 @@ Log.builder
 # microtest installs no at_exit hook, so the suite is started here. Crystal
 # loads a require once, so this runs once although every test requires it.
 Microtest.run!([
-  Microtest::ProgressReporter.new,
+  Microtest::DescriptionReporter.new,
   Microtest::ErrorListReporter.new,
   Microtest::SlowTestsReporter.new,
   Microtest::SummaryReporter.new,
