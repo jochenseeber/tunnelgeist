@@ -7,9 +7,21 @@ describe Tunnelgeist::FdPassing do
   {% if flag?(:darwin) %}
     include TunnelgeistDescriptorSender
 
-    # The descriptors currently open in this process.
-    def open_descriptors : Int32
-      (0...1_024).count { |fd| LibC.fcntl(fd, LibC::F_GETFD) != -1 }
+    # The most descriptors one message carries on Darwin: sendmsg refuses
+    # more as an invalid argument (checked with a C program).
+    MESSAGE_DESCRIPTORS = 254
+    # The most descriptor numbers `free_descriptors` looks at.
+    DESCRIPTOR_SCAN = 65_536
+
+    # How many more descriptors this process may open under its soft limit.
+    # Numbers past `DESCRIPTOR_SCAN` count as free, which only matters when
+    # the limit is far above what a message carries.
+    def free_descriptors : Int32
+      raise IO::Error.from_errno("getrlimit") unless LibC.getrlimit(LibC::RLIMIT_NOFILE, out limit) == 0
+
+      scanned = Math.min(limit.rlim_cur, DESCRIPTOR_SCAN.to_u64).to_i
+      open = (0...scanned).count { |fd| LibC.fcntl(fd, LibC::F_GETFD) != -1 }
+      Math.min(limit.rlim_cur - open, Int32::MAX.to_u64).to_i
     end
 
     test "a pipe descriptor sent with data arrives open and usable" do
@@ -108,25 +120,27 @@ describe Tunnelgeist::FdPassing do
       [left, right, first_reader, first_writer, second_reader, second_writer].each(&.try(&.close))
     end
 
-    test "200 descriptors in one message all arrive, and all but the first are closed" do
+    test "as many descriptors as one message carries all arrive, and all but the first are closed" do
       left, right = UNIXSocket.pair
       reader, writer = IO.pipe
-      before = open_descriptors
+      # The kernel installs one descriptor per copy, so the burst must fit
+      # the free descriptors, with one to spare for the receiving buffer.
+      burst = Math.min(MESSAGE_DESCRIPTORS, free_descriptors - 1)
+      raise "only #{burst} descriptors free; the spec needs more than the 13 the old buffer held" if burst <= 13
 
-      # Darwin lets one message carry up to 254 (sendmsg refuses more as an
-      # invalid argument, checked with a C program); 200 stays under a soft
-      # limit of 256 open descriptors. The kernel installs one descriptor per
-      # copy.
-      send_many(left, data: "x".to_slice, fds: Array.new(200, writer.fd))
+      send_many(left, data: "x".to_slice, fds: Array.new(burst, writer.fd))
       received = Tunnelgeist::FdPassing.receive(right, buffer: Bytes.new(4))
+      LibC.close(received.fd!)
+      writer.close
 
       # A control buffer too small for them would make the kernel install
       # every descriptor but report only those that fit, and the rest would
-      # stay open and unreachable.
-      assert(received.descriptor_count == 200)
-      assert(open_descriptors - before == 1)
-      LibC.close(received.fd!)
-      assert(open_descriptors == before)
+      # keep the pipe's write end open, so its reader would see no end of
+      # file.
+      assert(received.descriptor_count == burst)
+      # Without waiting: 0 is end of file, -1 (EAGAIN) a write end still open.
+      LibC.fcntl(reader.fd, LibC::F_SETFL, LibC.fcntl(reader.fd, LibC::F_GETFL) | LibC::O_NONBLOCK)
+      assert(LibC.read(reader.fd, Bytes.new(1), 1) == 0)
     ensure
       [left, right, reader, writer].each(&.try(&.close))
     end
