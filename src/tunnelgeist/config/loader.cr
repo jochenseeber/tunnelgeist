@@ -30,10 +30,10 @@ module Tunnelgeist
     # Reads and validates a configuration (CA1): the main file and the files
     # its includes name, each opened and checked through every directory
     # from `/` down by a `Directory`, `TrustedDirectory` unless the caller
-    # gives another (RF5), and read from what was checked, then read into its `Document` type, which refuses unknown
-    # fields (CC1), and checked and turned into `Config`. Loading builds a
-    # new `Config` and changes nothing else, so a failure leaves whatever
-    # the caller holds untouched.
+    # gives another (RF5), and read from what was checked, then read into
+    # its `Document` type, which refuses unknown fields (CC1), and checked
+    # and turned into `Config`. Loading builds a new `Config` and changes
+    # nothing else, so a failure leaves whatever the caller holds untouched.
     #
     # An error in a file's syntax or shape, which `SyntaxCheck` or the JSON
     # reader finds, names the line and column and the field path; one the
