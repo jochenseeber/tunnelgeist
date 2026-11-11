@@ -94,6 +94,6 @@ jobs:
         run: rake spec
 
       # The tests that need the root daemon and real utun devices
-      # (rake test:daemon) are not run here; they start the daemon under sudo.
+      # (rake exercise) are not run here; they start the daemon under sudo.
       - name: Run integration tests
         run: rake test

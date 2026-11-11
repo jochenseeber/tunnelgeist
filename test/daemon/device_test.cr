@@ -1,6 +1,6 @@
 # The daemon tests: a `Tunnelgeist::Client` asks the real root daemon, whose
 # socket path is in TUNNELGEIST_SOCKET, for utun devices, and the kernel's
-# `ifconfig`, `route` and `ping` look at them. `rake test:daemon` starts the
+# `ifconfig`, `route` and `ping` look at them. `rake exercise` starts the
 # daemon under sudo and runs these as the caller; plain `rake test` does not
 # compile them.
 require "../test_helper"
@@ -308,7 +308,7 @@ describe TunnelgeistDaemon do
     end
 
     # 10.77.3.1/24 with the peer 10.77.3.2, inside the address rule of the
-    # configuration `rake test:daemon` writes.
+    # configuration `rake exercise` writes.
     def test_address : Tunnelgeist::Address
       ipv4_address("10.77.3.1", peer: "10.77.3.2")
     end

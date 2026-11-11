@@ -16,7 +16,7 @@ Everything in development goes through `rake`:
 | `tunnelgeist:spec[pattern]`                  | The same as `spec`, for the one component.                                                                                                                                                                                             |
 | `cover`, `tunnelgeist:cover`                 | Runs the unit tests with coverage into `coverage/`.                                                                                                                                                                                    |
 | `test[pattern]`, `tunnelgeist:test[pattern]` | Runs the integration tests in `test/tunnelgeist/` (microtest), which use the system; not the daemon tests. `pattern` as for `spec`.                                                                                                    |
-| `test:daemon`                                | Runs the daemon tests in `test/daemon/` with real utun devices; see [Testing](#testing). Builds the daemon, asks for your `sudo` password once, starts it as root and runs the tests as you.                                           |
+| `exercise`                                   | Runs the daemon tests in `test/daemon/` with real utun devices; see [Testing](#testing). Builds the daemon, asks for your `sudo` password once, starts it as root and runs the tests as you.                                           |
 | `format[check]`                              | Formats the Crystal sources in `src/`, `spec/` and `test/`; with `check`, only reports files that would change.                                                                                                                        |
 | `lint`, `lint:crystal`, `lint:spelling`      | Runs ameba over the Crystal sources and cspell over the tracked files.                                                                                                                                                                 |
 | `build`, `build:debug`, `build:release`      | Builds the `tunnelgeist` program for every build profile of the host, in both or one mode. `build:<mode>:<profile>` builds one profile.                                                                                                |
@@ -67,7 +67,7 @@ The tests are written with microtest and come in three sets:
   the layout of `spec/`; `test/test_helper.cr` sets up microtest and
   `test/tunnelgeist/support/` holds their helpers. They run as you and change
   nothing on the system.
-- The daemon tests in `test/daemon/`, run by `rake test:daemon` and by nothing
+- The daemon tests in `test/daemon/`, run by `rake exercise` and by nothing
   else. A `Tunnelgeist::Client` asks a real daemon for utun devices, and the
   tests read the ICMP echo request of `ping -c1 -t2 10.77.3.2` from
   `device.fd`, check the routes the daemon adds and removes, and check that
@@ -81,7 +81,7 @@ The tests are written with microtest and come in three sets:
   devices of one user. Each test waits for the interfaces of its devices to go
   before the next one starts. They need macOS and root for the daemon only; the
   tests themselves run as you, as any client does, and find the daemon's socket
-  in `TUNNELGEIST_SOCKET`. `rake test:daemon` builds the daemon and the tests,
+  in `TUNNELGEIST_SOCKET`. `rake exercise` builds the daemon and the tests,
   runs `sudo -v` (the one password prompt) and writes the daemon's
   configuration with `sudo` to
   `/private/var/root/tunnelgeist-daemon-test-HASH/config.json`, in root's home,
@@ -105,7 +105,7 @@ test in `spec/`.
 ```sh
 rake spec
 rake test
-rake test:daemon   # starts the daemon under sudo
+rake exercise   # starts the daemon under sudo
 ```
 
 ## Commits
@@ -127,8 +127,8 @@ rake 'format[check]'
 rake lint
 ```
 
-Also build the daemon with `rake build:debug`, and run `rake test:daemon` after
-a change to the device, the daemon or the client. `rake lint` also type-checks
+Also build the daemon with `rake build:debug`, and run `rake exercise` after a
+change to the device, the daemon or the client. `rake lint` also type-checks
 the example programs in `examples/` against the library and spell-checks every
 tracked file; add real terms to `cspell.dict`, never misspellings.
 Documentation is formatted with `dprint fmt`.
@@ -212,15 +212,15 @@ the daemon needs, and no library file requires any of these:
   builds the starter configuration it writes when there is none.
 - `server`, `handler`, `registry`, `departure_watcher` (with its bindings in
   `departure_watcher/lib_kernel_event`), `command_runner` (with its bindings in
-  `command_runner/lib_spawn`): the accept loop, the request handler, the registry
-  of the devices, and the watcher that drops a device when its interface goes
-  away. `registry/entry` is one device with its owner, `registry/reservation` a
-  device slot taken for a user before the device exists, which the device
-  limits count, and `registry/rejection` a change the registry refused.
-  `handler/admitted` pairs an admitted peer with its admission, which judges
-  the items of its request, and `handler/request_line` reads the request line
-  with the descriptors that came with it and pins the device a change names
-  with its descriptor.
+  `command_runner/lib_spawn`): the accept loop, the request handler, the
+  registry of the devices, and the watcher that drops a device when its
+  interface goes away. `registry/entry` is one device with its owner,
+  `registry/reservation` a device slot taken for a user before the device
+  exists, which the device limits count, and `registry/rejection` a change the
+  registry refused. `handler/admitted` pairs an admitted peer with its
+  admission, which judges the items of its request, and `handler/request_line`
+  reads the request line with the descriptors that came with it and pins the
+  device a change names with its descriptor.
 - `peer`, `membership`, `signature_policy`, `config`, `authorizer`,
   `entitlement`, `refusal`, and their bindings `lib_system`, `lib_bsm`,
   `lib_cf` and `lib_security`: the peer checks. `config` is the parsed
