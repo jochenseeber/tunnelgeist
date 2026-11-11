@@ -172,7 +172,7 @@ module Tunnelgeist
         change(socket, peer: admitted.peer, admission: admitted.admission, request: request, line: line)
       end
     rescue error
-      # Protocol::Error without a message keeps its historic text.
+      # A Protocol::Error without a message is reported as "error".
       fallback = error.is_a?(Protocol::Error) ? "error" : error.class.name
       fail(socket, peer: admitted.peer, operation: request.operation, name: request.name, message: error.message || fallback)
     end

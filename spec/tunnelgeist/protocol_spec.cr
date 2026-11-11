@@ -7,8 +7,9 @@ describe Tunnelgeist::Protocol do
   {% if flag?(:darwin) %}
     alias Protocol = Tunnelgeist::Protocol
 
-    # Client text an error must never quote, since it ends up in the log.
-    CLIENT_TEXT = "Kq3vZ8xY1wT5uR7oP2nM4lK6jH9gF0dS_aB-cDeFgHi"
+    # Client text where the JSON parser expects another token; a syntax
+    # error names only the position, never the token.
+    CLIENT_TEXT = "client-token-0123456789"
     UTUN7       = Tunnelgeist::InterfaceName.new("utun7")
 
     def parse_error(line : String) : String

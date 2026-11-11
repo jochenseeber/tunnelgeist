@@ -18,8 +18,9 @@ module Tunnelgeist
     module SyntaxCheck
       # Raises `Error` for malformed JSON in *line* or a key an object holds
       # twice. The error about malformed JSON names only the position: the
-      # parser's own message quotes the unexpected token, untrusted client
-      # text, and the message ends up in the log and the reply (UC5).
+      # parser's own message quotes the unexpected token, an arbitrary piece
+      # of client text no check has passed, which has no place in the log
+      # and the reply.
       def self.check(line : String) : Nil
         pull = JSON::PullParser.new(line)
         walk(pull)

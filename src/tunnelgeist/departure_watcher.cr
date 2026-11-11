@@ -12,9 +12,10 @@ module Tunnelgeist
   # find the entry of the previous one, with its addresses and routes. The
   # removal is unconditional: Darwin can reuse the interface index together
   # with the unit, so a matching index does not prove the entry's device is
-  # still alive, and keeping the entry would fail open. When a new `create` took the name before the event was
-  # read, that device loses its entry, and its client's next change gets
-  # `unknown device` and must create a device again.
+  # still alive, and keeping the entry would fail open. When a new `create`
+  # took the name before the event was read, that device loses its entry,
+  # and its client's next change gets `unknown device` and must create a
+  # device again.
   #
   # The design names the routing socket's `RTM_IFANNOUNCE` message, but that
   # is FreeBSD's: macOS declares neither it nor `struct if_announcemsghdr`
