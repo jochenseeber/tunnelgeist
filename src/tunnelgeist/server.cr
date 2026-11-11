@@ -35,6 +35,9 @@ module Tunnelgeist
     ACCEPT_BACKOFF = 100.milliseconds
     # The longest wait after a failed accept.
     MAX_ACCEPT_BACKOFF = 1.second
+    # How often the loop, waiting at the connection limit, checks whether
+    # the listener was closed.
+    SLOT_CHECK_INTERVAL = 100.milliseconds
 
     # A server that accepts on *listener*, hands each connection to *handler*
     # and returns from `run` once *registry* is empty and nothing happened for
@@ -53,12 +56,14 @@ module Tunnelgeist
 
     # Serves connections until the server is idle, then closes the
     # listener and returns. Closing the listener from elsewhere also ends
-    # it.
+    # it, within `SLOT_CHECK_INTERVAL` when the loop waits at the connection
+    # limit; the connections being served then run on in their fibers.
     def run : Nil
       @idle_since = Time.instant
       spawn(name: "tunnelgeist.idle") { watch_idle }
       loop do
-        take_slot
+        break unless take_slot
+
         socket = accept
         unless socket
           @slots.receive
@@ -91,15 +96,26 @@ module Tunnelgeist
     end
 
     # Takes a connection slot, waiting while `max_connections` connections
-    # are being served. The wait is logged, so the operator sees why
+    # are being served, and returns true; returns false, taking none, once
+    # the listener is closed, which the wait checks every
+    # `SLOT_CHECK_INTERVAL` so a signal or the idle check is not held up
+    # until a connection ends. The wait is logged, so the operator sees why
     # clients hang.
-    private def take_slot : Nil
+    private def take_slot : Bool
       select
       when @slots.send(nil)
+        return true
       else
         @log.warn { "connection limit of #{@max_connections} reached, waiting for a connection to end" }
-        @slots.send(nil)
       end
+      until @listener.closed?
+        select
+        when @slots.send(nil)
+          return true
+        when timeout(SLOT_CHECK_INTERVAL)
+        end
+      end
+      false
     end
 
     private def serve(socket : UNIXSocket) : Nil

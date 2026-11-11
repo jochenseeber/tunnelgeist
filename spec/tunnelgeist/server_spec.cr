@@ -34,7 +34,7 @@ describe TunnelgeistServer do
     # A server on a socket in a fresh temporary directory with fakes behind
     # its handler.
     record ServerFixture, server : Tunnelgeist::Server, path : String, registry : Tunnelgeist::Registry,
-      backend : Log::MemoryBackend
+      backend : Log::MemoryBackend, listener : UNIXServer
 
     # Runs the block with a `ServerFixture`; its backend holds the server's log.
     def with_server(*, failures : Int32 = 0, max_connections : Int32 = Tunnelgeist::Server::MAX_CONNECTIONS, &)
@@ -55,7 +55,7 @@ describe TunnelgeistServer do
         server = Tunnelgeist::Server.new(listener, handler: handler, registry: registry, idle: 100.milliseconds,
           max_connections: max_connections, log: Log.new("tunnelgeist.server", backend, :debug))
         begin
-          yield ServerFixture.new(server: server, path: path, registry: registry, backend: backend)
+          yield ServerFixture.new(server: server, path: path, registry: registry, backend: backend, listener: listener)
         ensure
           listener.close
         end
@@ -158,6 +158,25 @@ describe TunnelgeistServer do
         true
       when timeout(within)
         false
+      end
+    end
+
+    test "run returns promptly when the listener closes while it waits at the connection limit" do
+      with_server(max_connections: 1) do |fixture|
+        done = start(fixture.server)
+        idle = UNIXSocket.new(fixture.path)
+        begin
+          waiting = !returned?(done, within: 50.milliseconds)
+          closed = Time.instant
+          fixture.listener.close
+          finished = returned?(done, within: 1.second)
+
+          assert(waiting)
+          assert(finished)
+          assert(closed.elapsed < 500.milliseconds)
+        ensure
+          idle.close
+        end
       end
     end
 
