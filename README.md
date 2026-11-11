@@ -2,6 +2,8 @@
 
 # tunnelgeist
 
+[![CI](https://github.com/jochenseeber/tunnelgeist/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jochenseeber/tunnelgeist/actions/workflows/ci.yml)
+
 On macOS only root can create a utun device, give it addresses or route to it.
 tunnelgeist is a root daemon that does this for programs that do not run as
 root, within the addresses and routes its configuration allows each of them. It
