@@ -5,11 +5,16 @@ require "c/unistd"
 require "json"
 require "socket"
 require "system/user"
+require "../checked_directory"
+require "../checked_directory/missing"
+require "../checked_directory/refusal"
 require "../decimal"
 require "../lib_system"
 require "../membership"
 require "../prefix"
 require "../signature_policy"
+require "../trusted_directory"
+require "../trusted_file"
 require "./address_rule"
 require "./client"
 require "./document"
@@ -19,20 +24,16 @@ require "./error"
 require "./field_path"
 require "./location"
 require "./syntax_check"
-require "./directory"
-require "./directory/missing"
-require "./trusted_directory"
-require "./trusted_file"
 require "../config"
 
 module Tunnelgeist
   struct Config
     # Reads and validates a configuration (CA1): the main file and the files
     # its includes name, each opened and checked through every directory
-    # from `/` down by a `Directory`, `TrustedDirectory` unless the caller
-    # gives another (RF5), and read from what was checked, then read into
-    # its `Document` type, which refuses unknown fields (CC1), and checked
-    # and turned into `Config`. Loading builds a new `Config` and changes
+    # from `/` down by a `CheckedDirectory`, `TrustedDirectory` unless the
+    # caller gives another (RF5), and read from what was checked, then read
+    # into its `Document` type, which refuses unknown fields (CC1), and
+    # checked and turned into `Config`. Loading builds a new `Config` and changes
     # nothing else, so a failure leaves whatever the caller holds untouched.
     #
     # An error in a file's syntax or shape, which `SyntaxCheck` or the JSON
@@ -72,8 +73,8 @@ module Tunnelgeist
                      @build_policy : Array(String) -> SignaturePolicy = ->(requirements : Array(String)) {
                        SignaturePolicy.new(requirements)
                      },
-                     @open_directory : Array(String), UInt32 -> Directory = ->(names : Array(String), owner : UInt32) {
-                       TrustedDirectory.open(names, owner: owner).as(Directory)
+                     @open_directory : Array(String), UInt32 -> CheckedDirectory = ->(names : Array(String), owner : UInt32) {
+                       TrustedDirectory.open(names, owner: owner).as(CheckedDirectory)
                      })
         @file = Loader.absolute(@path)
       end
@@ -111,8 +112,8 @@ module Tunnelgeist
 
       # The configuration; raises `Config::Error` naming the file, and the
       # field when there is one, for the first problem found. A directory
-      # the walk refuses is named itself; a missing one makes the main file
-      # missing.
+      # or file the walk refuses is named itself, with the walk's reason; a
+      # missing one makes the main file missing.
       def load : Config
         names = Loader.names(@file)
         raise Error.new(PARENT_COMPONENT, file: @file) if names.includes?("..")
@@ -144,10 +145,12 @@ module Tunnelgeist
 
           Config.new(socket: socket, group: membership.name, membership: membership, clients: clients)
         end
-      rescue error : Directory::Missing
+      rescue error : CheckedDirectory::Missing
         # The includes name what they miss themselves, so this is the main
         # file or a directory above it, and the path given is what to fix.
         raise Error.new("does not exist", file: @file, cause: error)
+      rescue error : CheckedDirectory::Refusal
+        raise Error.new(error.reason, file: error.path, cause: error)
       end
 
       # Runs the block with the directory `open_directory` opens through
@@ -251,7 +254,7 @@ module Tunnelgeist
 
       # The files *includes* names, relative to the main file's checked
       # *directory*, in order; the files of a glob sorted by name.
-      private def resolve(includes : Array(String), *, directory : Directory) : Array(TrustedFile)
+      private def resolve(includes : Array(String), *, directory : CheckedDirectory) : Array(TrustedFile)
         files = [] of TrustedFile
         includes.each_with_index do |entry, index|
           files.concat(resolve_entry(entry, directory: directory, field: FieldPath.element("includes", index)))
@@ -263,7 +266,7 @@ module Tunnelgeist
       # it is relative and from `/` when it is absolute. Errors about the
       # entry itself are about *field* of the main file, a NUL byte
       # included; those about what the walk opens name its path.
-      private def resolve_entry(entry : String, *, directory : Directory, field : String) : Array(TrustedFile)
+      private def resolve_entry(entry : String, *, directory : CheckedDirectory, field : String) : Array(TrustedFile)
         entry.check_no_null_byte
         names = Loader.names(entry)
         last = names.pop? || raise Error.new("must name a file", file: @file, field: field)
@@ -281,7 +284,7 @@ module Tunnelgeist
             raise Error.new("must name a file", file: @file, field: field)
           end
           within(names, absolute: entry.starts_with?('/'), directory: directory) { |parent| read_entry(parent, name: last) }
-        rescue error : Directory::Missing
+        rescue error : CheckedDirectory::Missing
           # A glob in a directory that is not there matches nothing.
           raise Error.new("file #{included_path(entry, directory: directory)} does not exist", file: @file,
             field: field, cause: error) unless glob?(last)
@@ -293,7 +296,7 @@ module Tunnelgeist
 
       # Runs the block with the directory reached through *names* from `/`
       # when *absolute*, else from the main file's *directory*.
-      private def within(names : Array(String), *, absolute : Bool, directory : Directory, &)
+      private def within(names : Array(String), *, absolute : Bool, directory : CheckedDirectory, &)
         if absolute
           opening(names) { |parent| yield parent }
         else
@@ -304,7 +307,7 @@ module Tunnelgeist
       # The file *name* in *parent*, or the files there whose names match
       # the glob *name*, sorted by name. A hidden name matches only a
       # pattern that starts with a dot, as in a shell.
-      private def read_entry(parent : Directory, *, name : String) : Array(TrustedFile)
+      private def read_entry(parent : CheckedDirectory, *, name : String) : Array(TrustedFile)
         if glob?(name)
           hidden = name.starts_with?('.')
           matches = parent.names.select! { |child| (hidden || !child.starts_with?('.')) && File.match?(name, child) }
@@ -316,15 +319,15 @@ module Tunnelgeist
 
       # The file *name* a glob matched in *parent*; nil when it went away
       # since the directory was listed, as if it had been listed after.
-      private def read_match(parent : Directory, *, name : String) : TrustedFile?
+      private def read_match(parent : CheckedDirectory, *, name : String) : TrustedFile?
         parent.read(name)
-      rescue Directory::Missing
+      rescue CheckedDirectory::Missing
         nil
       end
 
       # The path the include *entry* names, for the error that it does not
       # exist.
-      private def included_path(entry : String, *, directory : Directory) : String
+      private def included_path(entry : String, *, directory : CheckedDirectory) : String
         entry.starts_with?('/') ? Loader.absolute(entry) : Loader.absolute("#{directory.path}/#{entry}")
       end
 

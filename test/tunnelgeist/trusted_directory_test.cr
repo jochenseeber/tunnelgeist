@@ -1,25 +1,25 @@
 require "c/fcntl"
 require "c/sys/stat"
 require "system/user"
-require "../../test_helper"
-require "../../../src/tunnelgeist/config/error"
-require "../../../src/tunnelgeist/config/trusted_directory"
-require "../../../src/tunnelgeist/config/directory/missing"
-require "../../../src/tunnelgeist/lib_system"
-require "../support/raw_acl"
-require "../support/trusted_temporary_directory"
-require "../support/temporary_directory"
+require "../test_helper"
+require "../../src/tunnelgeist/checked_directory/missing"
+require "../../src/tunnelgeist/checked_directory/refusal"
+require "../../src/tunnelgeist/lib_system"
+require "../../src/tunnelgeist/trusted_directory"
+require "./support/raw_acl"
+require "./support/trusted_temporary_directory"
+require "./support/temporary_directory"
 
 # The walk from `/` to a configuration file (RF5.1, RF5.3) over real files
 # below the temporary directory, whose own ancestors it walks through too,
 # with ACLs set by `/bin/chmod +a` and, for rights it cannot set,
 # `fchmod_extended`.
-describe Tunnelgeist::Config::TrustedDirectory do
+describe Tunnelgeist::TrustedDirectory do
   {% if flag?(:darwin) %}
     include TunnelgeistTemporaryDirectory
 
-    alias Config = Tunnelgeist::Config
-    alias TrustedDirectory = Tunnelgeist::Config::TrustedDirectory
+    alias CheckedDirectory = Tunnelgeist::CheckedDirectory
+    alias TrustedDirectory = Tunnelgeist::TrustedDirectory
 
     # The uid running the tests, the trusted owner of what they create.
     def euid : UInt32
@@ -59,8 +59,8 @@ describe Tunnelgeist::Config::TrustedDirectory do
     end
 
     # The error reading the file at *path* through the walk raises.
-    def read_error(path : String) : Config::Error
-      raised(Config::Error) { read(path) }
+    def read_error(path : String) : CheckedDirectory::Refusal
+      raised(CheckedDirectory::Refusal) { read(path) }
     end
 
     # The descriptors open in this process, of the first 1024.
@@ -100,7 +100,7 @@ describe Tunnelgeist::Config::TrustedDirectory do
 
         error = read_error(File.join(link, "b", "config.json"))
 
-        assert(error.file == link)
+        assert(error.path == link)
         assert(error.message == "#{link}: must be a directory, not a symbolic link")
       end
     end
@@ -124,7 +124,7 @@ describe Tunnelgeist::Config::TrustedDirectory do
 
           error = read_error(path)
 
-          assert(error.file == writable)
+          assert(error.path == writable)
           assert(error.message == "#{writable}: directory must be writable only by its owner, not mode #{"%04o" % mode}")
         end
       end
@@ -135,9 +135,9 @@ describe Tunnelgeist::Config::TrustedDirectory do
         path = write(directory, name: "config.json")
         owner = euid + 1
 
-        error = raised(Config::Error) { read(path, owner: owner) }
+        error = raised(CheckedDirectory::Refusal) { read(path, owner: owner) }
 
-        assert(directory == error.file || directory.starts_with?("#{error.file}/"))
+        assert(directory == error.path || directory.starts_with?("#{error.path}/"))
         assert(error.reason == "directory must be owned by root or uid #{owner}, not uid #{euid}")
       end
     end
@@ -157,8 +157,8 @@ describe Tunnelgeist::Config::TrustedDirectory do
         missing_file = File.join(directory, "config.json")
         missing_directory = File.join(directory, "d")
 
-        assert(raised(Config::Directory::Missing) { read(missing_file) }.message == "#{missing_file}: does not exist")
-        assert(raised(Config::Directory::Missing) { read(File.join(missing_directory, "config.json")) }.message ==
+        assert(raised(CheckedDirectory::Missing) { read(missing_file) }.message == "#{missing_file}: does not exist")
+        assert(raised(CheckedDirectory::Missing) { read(File.join(missing_directory, "config.json")) }.message ==
                "#{missing_directory}: does not exist")
       end
     end
@@ -303,7 +303,7 @@ describe Tunnelgeist::Config::TrustedDirectory do
         File.chmod(File.join(directory, "a", "b"), 0o777)
 
         TrustedDirectory.open(names(File.join(directory, "a")), owner: euid) do |parent|
-          error = raised(Config::Error) { parent.descend(["b"]) { } }
+          error = raised(CheckedDirectory::Refusal) { parent.descend(["b"]) { } }
           assert(error.message == "#{directory}/a/b: directory must be writable only by its owner, not mode 0777")
           assert(parent.descend([] of String, &.read("d.json").text) == "d")
           assert(parent.read("d.json").text == "d")

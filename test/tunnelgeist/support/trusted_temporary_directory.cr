@@ -1,5 +1,5 @@
-require "../../../src/tunnelgeist/config/error"
-require "../../../src/tunnelgeist/config/trusted_directory"
+require "../../../src/tunnelgeist/checked_directory/refusal"
+require "../../../src/tunnelgeist/trusted_directory"
 
 # The configuration loader opens every file through the directories from `/`
 # down, and refuses one any of them does not pass; a test that loads files
@@ -11,8 +11,8 @@ module TunnelgeistTrustedTemporaryDirectory
   # *directory* or a directory above it for the trusted user *owner*.
   def check_trusted(directory : String, *, owner : UInt32) : Nil
     names = directory.split('/').reject!(&.empty?)
-    Tunnelgeist::Config::TrustedDirectory.open(names, owner: owner) { }
-  rescue error : Tunnelgeist::Config::Error
+    Tunnelgeist::TrustedDirectory.open(names, owner: owner) { }
+  rescue error : Tunnelgeist::CheckedDirectory::Refusal
     raise "the configuration loader refuses the temporary directory #{directory} (#{error.message}); set TMPDIR " \
           "to a directory that only root or you own, no one else may write and no ACL lets anyone else write, " \
           "down from /, such as macOS's own per-user one"

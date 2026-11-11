@@ -1,9 +1,9 @@
-require "../../../src/tunnelgeist/config/directory"
-require "../../../src/tunnelgeist/config/directory/missing"
-require "../../../src/tunnelgeist/config/error"
-require "../../../src/tunnelgeist/config/file_status"
-require "../../../src/tunnelgeist/config/trust_policy"
-require "../../../src/tunnelgeist/config/trusted_file"
+require "../../../src/tunnelgeist/checked_directory"
+require "../../../src/tunnelgeist/checked_directory/missing"
+require "../../../src/tunnelgeist/checked_directory/refusal"
+require "../../../src/tunnelgeist/file_status"
+require "../../../src/tunnelgeist/trust_policy"
+require "../../../src/tunnelgeist/trusted_file"
 require "./outside_temporary_directory"
 
 # A configuration directory for the specs of the loader. It applies
@@ -13,27 +13,29 @@ require "./outside_temporary_directory"
 # directory it made. It reads no ACL. *statuses* stand in for what `fstat`
 # says about the paths they name, such as another owner, which a spec could
 # not give a file itself.
-class TunnelgeistFakeDirectory < Tunnelgeist::Config::Directory
-  alias Config = Tunnelgeist::Config
+class TunnelgeistFakeDirectory < Tunnelgeist::CheckedDirectory
+  alias CheckedDirectory = Tunnelgeist::CheckedDirectory
+  alias FileStatus = Tunnelgeist::FileStatus
+  alias TrustPolicy = Tunnelgeist::TrustPolicy
 
   # The path of the directory.
   getter path : String
 
-  def initialize(@path : String, *, @owner : UInt32, @statuses : Hash(String, Config::FileStatus),
+  def initialize(@path : String, *, @owner : UInt32, @statuses : Hash(String, FileStatus),
                  @base : String)
   end
 
   # An `open_directory` for `Config::Loader` that opens directories at or
   # below *base*, the real path of the temporary directory unless given,
   # with *statuses* standing in for the status of the paths they name.
-  def self.opener(*, statuses : Hash(String, Config::FileStatus) = {} of String => Config::FileStatus,
-                  base : String = File.realpath(Dir.tempdir)) : Array(String), UInt32 -> Config::Directory
+  def self.opener(*, statuses : Hash(String, FileStatus) = {} of String => FileStatus,
+                  base : String = File.realpath(Dir.tempdir)) : Array(String), UInt32 -> CheckedDirectory
     ->(names : Array(String), owner : UInt32) do
-      new("/", owner: owner, statuses: statuses, base: base).open(names).as(Config::Directory)
+      new("/", owner: owner, statuses: statuses, base: base).open(names).as(CheckedDirectory)
     end
   end
 
-  def open(names : Array(String)) : Config::Directory
+  def open(names : Array(String)) : CheckedDirectory
     path = @path
     names.each do |name|
       path = path_of(name, parent: path)
@@ -45,14 +47,14 @@ class TunnelgeistFakeDirectory < Tunnelgeist::Config::Directory
     TunnelgeistFakeDirectory.new(path, owner: @owner, statuses: @statuses, base: @base)
   end
 
-  def read(name : String) : Config::TrustedFile
+  def read(name : String) : Tunnelgeist::TrustedFile
     path = path_of(name, parent: @path)
-    info = File.info?(path, follow_symlinks: false) || raise Config::Directory::Missing.new(file: path)
-    raise Config::Error.new("must be a regular file, not a symbolic link", file: path) if info.type.symlink?
-    problem = Config::TrustPolicy.file_problem(status(path, info: info), owner: @owner)
-    raise Config::Error.new(problem, file: path) if problem
+    info = File.info?(path, follow_symlinks: false) || raise CheckedDirectory::Missing.new(path: path)
+    raise CheckedDirectory::Refusal.new("must be a regular file, not a symbolic link", path: path) if info.type.symlink?
+    problem = TrustPolicy.file_problem(status(path, info: info), owner: @owner)
+    raise CheckedDirectory::Refusal.new(problem, path: path) if problem
 
-    Config::TrustedFile.new(path: path, text: File.read(path))
+    Tunnelgeist::TrustedFile.new(path: path, text: File.read(path))
   end
 
   def names : Array(String)
@@ -63,14 +65,14 @@ class TunnelgeistFakeDirectory < Tunnelgeist::Config::Directory
   end
 
   private def check_directory(path : String) : Nil
-    info = File.info?(path, follow_symlinks: false) || raise Config::Directory::Missing.new(file: path)
-    raise Config::Error.new("must be a directory, not a symbolic link", file: path) if info.type.symlink?
-    problem = Config::TrustPolicy.directory_problem(status(path, info: info), owner: @owner)
-    raise Config::Error.new(problem, file: path) if problem
+    info = File.info?(path, follow_symlinks: false) || raise CheckedDirectory::Missing.new(path: path)
+    raise CheckedDirectory::Refusal.new("must be a directory, not a symbolic link", path: path) if info.type.symlink?
+    problem = TrustPolicy.directory_problem(status(path, info: info), owner: @owner)
+    raise CheckedDirectory::Refusal.new(problem, path: path) if problem
   end
 
-  private def status(path : String, *, info : File::Info) : Config::FileStatus
-    @statuses[path]? || Config::FileStatus.new(type: info.type, owner: info.owner_id.to_u32,
+  private def status(path : String, *, info : File::Info) : FileStatus
+    @statuses[path]? || FileStatus.new(type: info.type, owner: info.owner_id.to_u32,
       mode: info.permissions.value.to_u16, size: info.size)
   end
 

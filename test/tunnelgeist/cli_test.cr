@@ -1,10 +1,11 @@
 require "json"
 require "../test_helper"
+require "../../src/tunnelgeist/checked_directory/missing"
+require "../../src/tunnelgeist/checked_directory/refusal"
 require "../../src/tunnelgeist/cli"
-require "../../src/tunnelgeist/config/directory/missing"
 require "../../src/tunnelgeist/config/error"
-require "../../src/tunnelgeist/config/trusted_directory"
 require "../../src/tunnelgeist/lib_system"
+require "../../src/tunnelgeist/trusted_directory"
 require "./support/temporary_directory"
 
 # The command line of `tunnelgeist` (UA5, UA9) where it reads the system:
@@ -87,14 +88,14 @@ describe TunnelgeistCLI do
       path = Tunnelgeist::Config::DEFAULT_PATH
       names = path.split('/').reject!(&.empty?)
       name = names.pop
-      Tunnelgeist::Config::TrustedDirectory.open(names, owner: Tunnelgeist::LibSystem.geteuid) do |directory|
+      Tunnelgeist::TrustedDirectory.open(names, owner: Tunnelgeist::LibSystem.geteuid) do |directory|
         directory.read(name)
       end
       nil
-    rescue error : Tunnelgeist::Config::Directory::Missing
+    rescue error : Tunnelgeist::CheckedDirectory::Missing
       Tunnelgeist::Config::Error.new("does not exist", file: Tunnelgeist::Config::DEFAULT_PATH)
-    rescue error : Tunnelgeist::Config::Error
-      error
+    rescue error : Tunnelgeist::CheckedDirectory::Refusal
+      Tunnelgeist::Config::Error.new(error.reason, file: error.path)
     end
 
     test "serve without --config loads the default path and fails with what the walk to it finds" do

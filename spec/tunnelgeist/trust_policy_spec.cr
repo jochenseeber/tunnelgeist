@@ -1,31 +1,32 @@
-require "../../spec_helper"
-require "../../../src/tunnelgeist/config/acl_entry"
-require "../../../src/tunnelgeist/config/acl_permissions"
-require "../../../src/tunnelgeist/config/file_status"
-require "../../../src/tunnelgeist/config/trust_policy"
+require "../spec_helper"
+require "../../src/tunnelgeist/acl_entry"
+require "../../src/tunnelgeist/acl_permissions"
+require "../../src/tunnelgeist/file_status"
+require "../../src/tunnelgeist/trust_policy"
 
 # The rules a configuration file and the directories above it must pass
 # (RF5.1, RF5.3), against statuses and ACL entries built by hand.
-describe Tunnelgeist::Config::TrustPolicy do
+describe Tunnelgeist::TrustPolicy do
   {% if flag?(:darwin) %}
-    alias Config = Tunnelgeist::Config
-    alias TrustPolicy = Tunnelgeist::Config::TrustPolicy
-    alias Permissions = Tunnelgeist::Config::AclPermissions
+    alias TrustPolicy = Tunnelgeist::TrustPolicy
+    alias FileStatus = Tunnelgeist::FileStatus
+    alias AclEntry = Tunnelgeist::AclEntry
+    alias Permissions = Tunnelgeist::AclPermissions
 
     # The trusted user besides root.
     OWNER = 501_u32
 
     def status(*, type : File::Type = File::Type::File, owner : UInt32 = OWNER, mode : Int32 = 0o644,
-               size : Int64 = 10_i64) : Config::FileStatus
-      Config::FileStatus.new(type: type, owner: owner, mode: mode.to_u16, size: size)
+               size : Int64 = 10_i64) : FileStatus
+      FileStatus.new(type: type, owner: owner, mode: mode.to_u16, size: size)
     end
 
-    def directory(*, owner : UInt32 = 0_u32, mode : Int32 = 0o755) : Config::FileStatus
+    def directory(*, owner : UInt32 = 0_u32, mode : Int32 = 0o755) : FileStatus
       status(type: File::Type::Directory, owner: owner, mode: mode)
     end
 
-    def allow(permissions : Permissions, *, uid : UInt32? = nil) : Config::AclEntry
-      Config::AclEntry.new(allow: true, uid: uid, permissions: permissions)
+    def allow(permissions : Permissions, *, uid : UInt32? = nil) : AclEntry
+      AclEntry.new(allow: true, uid: uid, permissions: permissions)
     end
 
     test "directory_problem accepts a directory root or the owner owns that no one else may write" do
@@ -86,9 +87,9 @@ describe Tunnelgeist::Config::TrustPolicy do
     end
 
     test "acl_problem accepts no ACL, denials, and grants to read, list or search" do
-      assert(TrustPolicy.acl_problem([] of Config::AclEntry, owner: OWNER).nil?)
+      assert(TrustPolicy.acl_problem([] of AclEntry, owner: OWNER).nil?)
       entries = [
-        Config::AclEntry.new(allow: false, uid: nil, permissions: Permissions::All),
+        AclEntry.new(allow: false, uid: nil, permissions: Permissions::All),
         allow(Permissions::ReadData | Permissions::Execute | Permissions::ReadAttributes |
               Permissions::ReadExtattributes | Permissions::ReadSecurity | Permissions::Synchronize),
         allow(Permissions::ReadData, uid: 502_u32),

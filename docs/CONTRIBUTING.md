@@ -220,15 +220,7 @@ the daemon needs, and no library file requires any of these:
   files' shape that the loader reads them into, `config/syntax_check` checks a
   file's JSON syntax and refuses a key given twice before that,
   `config/field_path` builds the field paths errors name, `config/location` is
-  the line and column of an error the JSON reader found, `config/directory` is
-  a checked directory the loader reads each file through (with
-  `directory/missing`, its error for a name that does not exist), and
-  `config/trusted_directory` the one the daemon uses, which opens each
-  directory and file through checked descriptors from `/` down (with its
-  bindings in `config/lib_directory` and `config/lib_acl`),
-  `config/trust_policy` decides what passes from a `config/file_status` and the
-  `config/acl_entry`s with their `config/acl_permissions`, and
-  `config/trusted_file` is the text read with its path, `config/client` and
+  the line and column of an error the JSON reader found, `config/client` and
   `config/address_rule` are one client configuration and one of its address
   rules, `config/error` names the file and field of a refused configuration,
   and `config/holder` keeps the configuration in use and swaps it on `SIGHUP`.
@@ -240,6 +232,15 @@ the daemon needs, and no library file requires any of these:
   `lib_bsm`, `lib_cf` and `lib_security` link the BSM library, CoreFoundation
   and Security, so only the daemon does; a program that uses the client or
   `Device` links none of them.
+- `checked_directory`, `trusted_directory`, `trust_policy`: the directories the
+  daemon trusts. `checked_directory` is a checked directory the configuration
+  loader reads each file through (with `checked_directory/refusal`, its error
+  naming the path it refused and why, and `checked_directory/missing`, the one
+  for a name that does not exist), and `trusted_directory` the one the daemon
+  uses, which opens each directory and file through checked descriptors from
+  `/` down (with its bindings in `lib_directory` and `lib_acl`). `trust_policy`
+  decides what passes from a `file_status` and the `acl_entry`s with their
+  `acl_permissions`, and `trusted_file` is the text read with its path.
 
 `family` belongs to the library: `address`, `prefix` and `commands` require it.
 So does `decimal`, the check of ASCII digits that `interface_name`, `prefix`,

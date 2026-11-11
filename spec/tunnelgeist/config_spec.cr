@@ -6,9 +6,9 @@ require "../../src/tunnelgeist/config"
 require "../../src/tunnelgeist/config/address_rule"
 require "../../src/tunnelgeist/config/document/main"
 require "../../src/tunnelgeist/config/error"
-require "../../src/tunnelgeist/config/file_status"
 require "../../src/tunnelgeist/config/loader"
 require "../../src/tunnelgeist/config/location"
+require "../../src/tunnelgeist/file_status"
 require "../../src/tunnelgeist/signature_policy"
 require "./support/fake_directory"
 require "./support/fake_membership"
@@ -95,7 +95,7 @@ describe TunnelgeistConfig do
       # system says about the paths they name.
       def loader(path : String, *, owner : UInt32 = TunnelgeistConfigTest.owner_of(File.dirname(path)),
                  find_user : String -> UInt32? = ->(name : String) : UInt32? { USERS[name]? },
-                 statuses : Hash(String, Config::FileStatus) = {} of String => Config::FileStatus) : Config::Loader
+                 statuses : Hash(String, Tunnelgeist::FileStatus) = {} of String => Tunnelgeist::FileStatus) : Config::Loader
         Config::Loader.new(path: path, owner: owner,
           find_user: find_user,
           open_directory: TunnelgeistFakeDirectory.opener(statuses: statuses),
@@ -895,7 +895,7 @@ describe TunnelgeistConfig do
       with_fixture do |fixture|
         fixture.write("config.json", content: main_json)
         other = fixture.owner + 1
-        statuses = {fixture.main => Config::FileStatus.new(type: File::Type::File, owner: other, mode: 0o644_u16, size: 10_i64)}
+        statuses = {fixture.main => Tunnelgeist::FileStatus.new(type: File::Type::File, owner: other, mode: 0o644_u16, size: 10_i64)}
 
         error = raised(Config::Error) { Lookups.new.loader(fixture.main, owner: fixture.owner, statuses: statuses).load }
 
@@ -908,7 +908,7 @@ describe TunnelgeistConfig do
       with_fixture do |fixture|
         fixture.write("config.json", content: main_json)
         other = fixture.owner + 1
-        statuses = {fixture.directory => Config::FileStatus.new(type: File::Type::Directory, owner: other,
+        statuses = {fixture.directory => Tunnelgeist::FileStatus.new(type: File::Type::Directory, owner: other,
           mode: 0o755_u16, size: 64_i64)}
 
         error = raised(Config::Error) { Lookups.new.loader(fixture.main, owner: fixture.owner, statuses: statuses).load }
