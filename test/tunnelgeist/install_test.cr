@@ -67,6 +67,10 @@ describe TunnelgeistInstall do
       Tunnelgeist::CommandRunner::Result.new(exit_status: status, output: "", error: error)
     end
 
+    def timed_out : Tunnelgeist::CommandRunner::Result
+      Tunnelgeist::CommandRunner::Result.new(exit_status: -1, output: "", error: "", timed_out_after: 10.seconds)
+    end
+
     # The outcome of one `install` or `uninstall`.
     record Outcome, status : Int32, output : String, error : String do
       def lines : Array(String)
@@ -288,6 +292,11 @@ describe TunnelgeistInstall do
       xml = Install.new(paths: paths).plist(config_path: "/tmp/a & b.json", socket: "/tmp/<tg>.sock", group_gid: 20_u32)
 
       assert(lints?(xml))
+    end
+
+    # A limit of zero runs out before `plutil` can answer.
+    test "lint reports a plutil that runs out of time" do
+      assert(Install.lint(default_plist, timeout: Time::Span.zero) == "timed out after 0 s")
     end
 
     test "lint accepts the plist and reports a broken one" do
@@ -616,6 +625,17 @@ describe TunnelgeistInstall do
       end
     end
 
+    test "install fails when dseditgroup runs out of time" do
+      with_layout do |layout|
+        recorder = Recorder.new { timed_out }
+        find_group = ->(_name : String) : UInt32? { nil }
+        outcome = install(installer(layout, recorder: recorder, find_group: find_group), group: "helpers")
+
+        assert(outcome.status == 1)
+        assert(outcome.error == "tunnelgeist: #{DSEDITGROUP} -o create helpers timed out after 10 s\n")
+      end
+    end
+
     test "install fails when the group is still missing after dseditgroup created it" do
       with_layout do |layout|
         recorder = Recorder.new { succeeded }
@@ -691,6 +711,16 @@ describe TunnelgeistInstall do
 
         assert(outcome.status == 1)
         assert(outcome.error == "tunnelgeist: #{LAUNCHCTL} bootstrap system #{layout.paths.plist} exited 5: Input/output error\n")
+      end
+    end
+
+    test "install fails when launchctl bootstrap runs out of time" do
+      with_layout do |layout|
+        recorder = Recorder.new { |argv| argv[1] == "bootstrap" ? timed_out : succeeded }
+        outcome = install(installer(layout, recorder: recorder))
+
+        assert(outcome.status == 1)
+        assert(outcome.error == "tunnelgeist: #{LAUNCHCTL} bootstrap system #{layout.paths.plist} timed out after 10 s\n")
       end
     end
 

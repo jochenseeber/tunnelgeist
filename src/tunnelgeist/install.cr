@@ -92,9 +92,9 @@ module Tunnelgeist
     end
 
     # Nil when `plutil -lint` accepts *xml* on its standard input, else what
-    # it reports, or that it ran out of time.
-    def self.lint(xml : String) : String?
-      result = CommandRunner.run([PLUTIL, "-lint", "-"], input: xml)
+    # it reports, or that it ran out of *timeout*.
+    def self.lint(xml : String, *, timeout : Time::Span = CommandRunner::COMMAND_TIMEOUT) : String?
+      result = CommandRunner.run([PLUTIL, "-lint", "-"], input: xml, timeout: timeout)
       return if result.success?
 
       result.timed_out? ? result.outcome : "#{result.output}#{result.error}".strip
@@ -214,7 +214,7 @@ module Tunnelgeist
       result = run(DSEDITGROUP, "-o", "create", group)
       unless result.success?
         raise Failure.new("#{DSEDITGROUP} -o create #{group} #{result.outcome}",
-          program: DSEDITGROUP, exit_status: result.exit_status)
+          program: DSEDITGROUP, exit_status: result.exit_status, timed_out_after: result.timed_out_after)
       end
 
       output.puts "created group #{group}"
@@ -402,7 +402,7 @@ module Tunnelgeist
       return if result.success?
 
       raise Failure.new("#{LAUNCHCTL} #{arguments.join(' ')} #{result.outcome}",
-        program: LAUNCHCTL, exit_status: result.exit_status)
+        program: LAUNCHCTL, exit_status: result.exit_status, timed_out_after: result.timed_out_after)
     end
 
     # Runs a program by absolute path with an empty environment (UC4).

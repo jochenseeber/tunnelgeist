@@ -242,6 +242,21 @@ describe TunnelgeistInstall do
       assert(failure.exit_status! == 5)
     end
 
+    test "Failure carries the time limit of a program that ran out of time" do
+      failure = Install::Failure.new("/bin/launchctl bootstrap timed out after 10 s", program: "/bin/launchctl",
+        exit_status: -1, timed_out_after: 10.seconds)
+
+      assert(failure.timed_out_after == 10.seconds)
+      assert(failure.timed_out_after! == 10.seconds)
+    end
+
+    test "Failure has no time limit for a program that ended by itself" do
+      failure = Install::Failure.new("launchctl bootstrap exited 5: no", program: "/bin/launchctl", exit_status: 5)
+
+      assert(failure.timed_out_after.nil?)
+      assert(raised(NilAssertionError) { failure.timed_out_after! }.message == "no program ran out of time: launchctl bootstrap exited 5: no")
+    end
+
     test "Failure has no program or exit status for a step that ran none" do
       failure = Install::Failure.new("cannot find the running executable")
 
