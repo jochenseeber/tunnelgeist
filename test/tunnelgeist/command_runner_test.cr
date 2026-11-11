@@ -84,19 +84,62 @@ describe TunnelgeistCommandRunner do
       assert(!Process.exists?(printed_pid(result)))
     end
 
-    # The runner signals only the shell, so the test ends the `sleep` the
-    # shell left behind itself.
-    test "a program that ended but left its output open in a child it started times out with its exit status" do
+    # Whether process *pid* is gone within a second: a child of a stopped
+    # program is reaped by launchd, not by the test, so it may linger briefly.
+    def gone?(pid : Int64) : Bool
+      deadline = Time.instant + 1.second
+      while Process.exists?(pid)
+        return false if Time.instant >= deadline
+
+        sleep 10.milliseconds
+      end
+      true
+    end
+
+    test "a program that ended but left its output open in a child it started times out with its exit status and the child is stopped" do
       started = Time.instant
       result = CommandRunner.run(["/bin/sh", "-c", "/bin/sleep 30 & echo $!; echo done"], timeout: 500.milliseconds)
+      sleeper = printed_pid(result)
       begin
         assert(started.elapsed < 3.seconds)
         assert(result.timed_out?)
         assert(result.exit_status == 0)
         assert(result.output.lines.last? == "done")
+        assert(gone?(sleeper))
       ensure
-        Process.signal(Signal::KILL, printed_pid(result))
+        Process.signal(Signal::KILL, sleeper) if Process.exists?(sleeper)
       end
+    end
+
+    test "a child the program started is stopped with the program when the time runs out" do
+      result = CommandRunner.run(["/bin/sh", "-c", "/bin/sleep 30 & echo $!; wait"], timeout: 500.milliseconds)
+      sleeper = printed_pid(result)
+      begin
+        assert(result.timed_out?)
+        assert(gone?(sleeper))
+      ensure
+        Process.signal(Signal::KILL, sleeper) if Process.exists?(sleeper)
+      end
+    end
+
+    test "the program runs in a process group of its own" do
+      result = CommandRunner.run(["/bin/sh", "-c", "echo $$; /bin/ps -o pgid= -p $$"])
+
+      lines = result.output.lines.map(&.strip)
+      assert(result.success?)
+      assert(lines.size == 2)
+      assert(lines[0] == lines[1])
+      assert(lines[1] != Process.pgid.to_s)
+    end
+
+    # The test ignores `PIPE`, as every Crystal program does; a child that
+    # inherited that would make `yes` report a write error once `head` ends.
+    test "the program gets the default action of a signal the runner ignores" do
+      result = CommandRunner.run(["/bin/sh", "-c", "/usr/bin/yes | /usr/bin/head -c 1"])
+
+      assert(result.success?)
+      assert(result.output == "y")
+      assert(result.error == "")
     end
 
     test "a program that finishes within the time limit is not timed out" do
@@ -107,10 +150,8 @@ describe TunnelgeistCommandRunner do
       assert(result.output == "done\n")
     end
 
-    # The children of the test inherit its ignored `PIPE` signal, so `yes` ends
-    # with an error message on standard error when `head` has had enough.
     test "standard output past 4096 bytes is drained and cut with a marker" do
-      result = CommandRunner.run(["/bin/sh", "-c", "/usr/bin/yes 2>/dev/null | /usr/bin/head -c 100000"])
+      result = CommandRunner.run(["/bin/sh", "-c", "/usr/bin/yes | /usr/bin/head -c 100000"])
 
       assert(result.success?)
       assert(result.output == "y\n" * 2_048 + " … (truncated)")
@@ -118,7 +159,7 @@ describe TunnelgeistCommandRunner do
     end
 
     test "standard error past 4096 bytes is drained and cut with a marker" do
-      result = CommandRunner.run(["/bin/sh", "-c", "/usr/bin/yes 2>/dev/null | /usr/bin/head -c 100000 >&2; echo out"])
+      result = CommandRunner.run(["/bin/sh", "-c", "/usr/bin/yes | /usr/bin/head -c 100000 >&2; echo out"])
 
       assert(result.success?)
       assert(result.output == "out\n")

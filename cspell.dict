@@ -1,12 +1,16 @@
 # Project-specific words, one per line (lowercase singular form)
 addaddress
+adddup
+addopen
 alignbytes
 announcemsghdr
 atoken
+attrp
 boehm
 bootout
 bsdtar
 bytesize
+chld
 claudeface
 cloexec
 closedir
@@ -45,6 +49,7 @@ enfile
 enoent
 enotdir
 entrycount
+envp
 eopnotsupp
 eperm
 epipe
@@ -112,6 +117,7 @@ namelen
 nametoindex
 namlen
 netsrc
+newfd
 nilable
 nodoc
 nofd
@@ -133,7 +139,9 @@ otool
 pcre
 peertoken
 permset
+pgid
 pgrep
+pgroup
 pipefail
 plutil
 pointerof
@@ -155,9 +163,20 @@ seeber
 sendmsg
 setfd
 setfl
+setflags
 setgid
+setpgroup
 setrlimit
+setsigdef
+setsigdefault
+setsigmask
 setuid
+sigdefault
+sigdelset
+sigemptyset
+sigfillset
+sigmask
+sigset
 siocsifmtu
 siocskevfilt
 sockaddr
@@ -165,6 +184,7 @@ socketpair
 sockio
 socklen
 softprops
+spawnattr
 stddef
 sysaddr
 syscall

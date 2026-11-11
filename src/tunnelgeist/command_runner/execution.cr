@@ -2,7 +2,7 @@
 
 require "./bounded_buffer"
 require "./result"
-require "../inherited_descriptors"
+require "./spawner"
 
 module Tunnelgeist
   module CommandRunner
@@ -21,8 +21,9 @@ module Tunnelgeist
       # environment, with *input* as its standard input when given and the
       # null device otherwise; keeps at most *output_limit* bytes of each of
       # its standard output and standard error. Raises `IO::Error` when the
-      # program cannot be started. Every descriptor above 2 is closed in the
-      # child, whoever opened it.
+      # program cannot be started. The program leads a process group of its
+      # own, every signal has its default action, and it inherits no
+      # descriptor but its standard input, output and error (`Spawner`).
       def self.start(argv : Array(String), *, input : String?, output_limit : Int32) : self
         # Declared before the `begin`, so that a failure closes the pipes
         # made before it.
@@ -32,9 +33,7 @@ module Tunnelgeist
           output_reader, output_writer = IO.pipe(write_blocking: true)
           error_reader, error_writer = IO.pipe(write_blocking: true)
           input_reader, input_writer = IO.pipe(read_blocking: true) if input
-          InheritedDescriptors.mark_close_on_exec
-          process = Process.new(argv[0], argv[1..], env: {} of String => String, clear_env: true,
-            input: input_reader || Process::Redirect::Close, output: output_writer, error: error_writer)
+          process = Spawner.start(argv, input: input_reader, output: output_writer, error: error_writer)
           new(process, output: output_reader, error: error_reader, input: input_writer, text: input, output_limit: output_limit)
         rescue error
           [output_reader, error_reader, input_writer].each(&.try(&.close))
@@ -76,9 +75,10 @@ module Tunnelgeist
       end
 
       # Waits for the program to end and its output to be drained, at most
-      # *timeout*. A program still running then is sent `TERM`, and `KILL`
-      # after `TERMINATION_GRACE`; it is always reaped. The `Result` keeps
-      # the output read until then.
+      # *timeout*. Then its process group is sent `TERM`, and `KILL` after
+      # `TERMINATION_GRACE`, which stops the processes it started too unless
+      # they left the group; it is always reaped. The `Result` keeps the
+      # output read until then.
       def finish(timeout : Time::Span) : Result
         timed_out = false
         outcome = select
@@ -97,30 +97,30 @@ module Tunnelgeist
           timed_out_after: timed_out ? timeout : nil)
       end
 
-      # Ends a program that ran out of time and returns what `#await`
-      # reports. A program that already ended, but whose output a process it
-      # started still holds open, is not signalled: its pid may have been
-      # reused.
+      # Ends a program that ran out of time, and the processes it started, and
+      # returns what `#await` reports. The group is signalled also when the
+      # program itself already ended but a process it started still holds
+      # its output open: the group's id stays taken while any member lives,
+      # so it names no other process. The pipes are closed last, for a
+      # process that left the group and still holds them.
       private def stop : Process::Status | Exception
-        unless @process.terminated?
-          signal(Signal::TERM)
-          select
-          when finished = @finished.receive
-            return finished
-          when timeout(TERMINATION_GRACE)
-            signal(Signal::KILL) unless @process.terminated?
-          end
+        signal(Signal::TERM)
+        select
+        when finished = @finished.receive
+          return finished
+        when timeout(TERMINATION_GRACE)
+          signal(Signal::KILL)
         end
         @stopped = true
         @pipes.each(&.close)
         @finished.receive
       end
 
-      # Sends *signal* to the program; one that ended meanwhile is no error.
+      # Sends *signal* to the program's process group; a group whose members
+      # all ended meanwhile is no error.
       private def signal(signal : Signal) : Nil
-        @process.signal(signal)
-      rescue error : RuntimeError
-        raise error unless error.os_error == Errno::ESRCH
+        return if LibC.kill(-@process.pid.to_i32, signal.value) == 0
+        raise RuntimeError.from_errno("kill") unless Errno.value == Errno::ESRCH
       end
 
       # Reaps the program, waits until both pipes are drained and reports the

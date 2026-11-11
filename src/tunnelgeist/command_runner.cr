@@ -36,15 +36,17 @@ module Tunnelgeist
 
     # Runs *argv*, with *input* as its standard input when given, and
     # returns its `Result` once it has ended; raises `IO::Error` when the
-    # program cannot be started. Every descriptor above 2 is closed in the
-    # child, whoever opened it.
+    # program cannot be started. The program leads a process group of its
+    # own, starts with every signal at its default action, and inherits no
+    # descriptor above 2, whoever opened it.
     #
     # The run waits while `COMMAND_CONCURRENCY` other programs run. A
     # program still running after *timeout* is sent `TERM`, and `KILL` a
     # second later, and is reaped; its result is timed out. A program that
     # ended but left its output open in a process it started is timed out
-    # too, with the exit status it ended with. The signals reach only the
-    # program itself, not the processes it started. Of each of standard
+    # too, with the exit status it ended with. The signals go to the
+    # program's process group, so they also reach the processes it started
+    # that stayed in it. Of each of standard
     # output and standard error the first *output_limit* bytes are kept and
     # the rest is read and dropped.
     def self.run(argv : Array(String), *, input : String? = nil, timeout : Time::Span = COMMAND_TIMEOUT,

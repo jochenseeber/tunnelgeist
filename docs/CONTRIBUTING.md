@@ -211,8 +211,8 @@ the daemon needs, and no library file requires any of these:
   creates and writes there through `trusted_directory`, and `install/starter`
   builds the starter configuration it writes when there is none.
 - `server`, `handler`, `registry`, `departure_watcher` (with its bindings in
-  `departure_watcher/lib_kernel_event`), `command_runner` (with
-  `inherited_descriptors`): the accept loop, the request handler, the registry
+  `departure_watcher/lib_kernel_event`), `command_runner` (with its bindings in
+  `command_runner/lib_spawn`): the accept loop, the request handler, the registry
   of the devices, and the watcher that drops a device when its interface goes
   away. `registry/entry` is one device with its owner, `registry/reservation` a
   device slot taken for a user before the device exists, which the device
