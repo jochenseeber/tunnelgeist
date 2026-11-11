@@ -1,0 +1,16 @@
+{
+    "socket": "/var/run/tunnelgeist.sock",
+    "group": "tunnelgeist",
+    "includes": ["clients.d/*.json"],
+    "clients": [
+        {
+            "name": "admins",
+            "groups": ["admin"],
+            "addresses": [
+                { "network": "10.0.0.0/8", "peer": "10.0.0.0/8" },
+                { "network": "fc00::/7" }
+            ],
+            "routes": ["10.0.0.0/8", "fc00::/7"]
+        }
+    ]
+}

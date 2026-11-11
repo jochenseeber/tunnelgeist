@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  # Branch pushes and pull requests run CI directly. Tag pushes do not (the
+  # branches filter excludes tags): the Release workflow runs CI through
+  # workflow_call and gates the build on it, so a tag would otherwise run it
+  # twice.
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_call:
+
+# CI only reads the repository.
+permissions:
+  contents: read
+
+jobs:
+  # The Crystal version comes from shard.yml's `actions.crystal`, exposed as an
+  # output because a job's `with:` is evaluated before its steps run.
+  crystal-version:
+    name: Resolve Crystal version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: read
+        run: |
+          set -euo pipefail
+          v=$(ruby -r yaml -e 'puts YAML.load_file("shard.yml").dig("actions", "crystal")')
+          test -n "$v"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Crystal version: $v"
+
+  # tunnelgeist builds and runs on macOS only (its sources skip themselves
+  # elsewhere), so every job runs on a macOS runner and through rake, as on a
+  # developer's machine.
+  lint:
+    name: Lint
+    runs-on: macos-15
+    needs: crystal-version
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: ${{ needs.crystal-version.outputs.version }}
+
+      - uses: actions/cache@v6
+        with:
+          path: lib
+          key: macos-${{ needs.crystal-version.outputs.version }}-${{ hashFiles('shard.lock') }}
+          restore-keys: |
+            macos-${{ needs.crystal-version.outputs.version }}-
+
+      - name: Install dependencies
+        run: shards install
+
+      # lint:spelling runs cspell over the tracked files.
+      - name: Install cspell
+        run: npm install --global cspell@10.4.0
+
+      - name: Check formatting
+        run: rake 'format[check]'
+
+      - name: Lint
+        env:
+          NO_COLOR: "1"
+        run: rake lint
+
+  test:
+    name: Test (macOS arm64)
+    runs-on: macos-15
+    needs: [crystal-version, lint]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: ${{ needs.crystal-version.outputs.version }}
+
+      - uses: actions/cache@v6
+        with:
+          path: lib
+          key: macos-${{ needs.crystal-version.outputs.version }}-${{ hashFiles('shard.lock') }}
+          restore-keys: |
+            macos-${{ needs.crystal-version.outputs.version }}-
+
+      - name: Install dependencies
+        run: shards install
+
+      - name: Run unit tests
+        run: rake spec
+
+      # The tests that need the root daemon and real utun devices
+      # (rake test:daemon) are not run here; they start the daemon under sudo.
+      - name: Run integration tests
+        run: rake test

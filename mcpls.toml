@@ -1,0 +1,14 @@
+[workspace]
+roots = []
+
+[[workspace.language_extensions]]
+extensions = ["cr"]
+language_id = "crystal"
+
+[[lsp_servers]]
+language_id = "crystal"
+command = "crystalline"
+args = []
+file_patterns = ["**/*.cr"]
+timeout_seconds = 60
+request_timeout_seconds = 60

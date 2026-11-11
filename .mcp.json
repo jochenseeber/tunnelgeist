@@ -1,0 +1,11 @@
+{
+    "mcpServers": {
+        "crystal": {
+            "args": [
+                "--config",
+                "mcpls.toml"
+            ],
+            "command": "mcpls"
+        }
+    }
+}

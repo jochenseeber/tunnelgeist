@@ -1,0 +1,15 @@
+project:
+  name: tunnelgeist
+  version: 1.0.0-dev
+  license: MIT
+  authors:
+    - Jochen Seeber
+crystal:
+  # The daemon uses no Regex, so its hardened binary needs no JIT entitlement.
+  allow_jit: false
+  static_libraries:
+    - gc
+  profiles:
+    macosx:
+      common:
+        - darwin-arm64-system-static

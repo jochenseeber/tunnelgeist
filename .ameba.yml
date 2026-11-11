@@ -1,0 +1,9 @@
+# .ameba.yml
+Globs:
+  - "**/*.cr"
+  - "!lib"
+
+# Spec support files are required by specs, not run as specs.
+Lint/SpecFilename:
+  Excluded:
+    - spec/tunnelgeist/support/*.cr

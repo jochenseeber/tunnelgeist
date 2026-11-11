@@ -1,0 +1,25 @@
+name: tunnelgeist
+version: 1.0.0-dev
+license: MIT
+description: A root helper that creates and configures utun devices for unprivileged programs on macOS
+
+authors:
+  - Jochen Seeber
+
+crystal: ">= 1.22.0"
+
+# The Crystal toolchain the GitHub workflows install.
+actions:
+  crystal: "1.22.0"
+
+targets:
+  tunnelgeist:
+    main: src/bin/tunnelgeist.cr
+
+development_dependencies:
+  microtest:
+    github: jochenseeber/microtest
+    branch: develop
+  ameba:
+    github: crystal-ameba/ameba
+    version: ~> 1.7

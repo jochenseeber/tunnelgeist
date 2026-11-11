@@ -1,0 +1,121 @@
+# Client library
+
+`Tunnelgeist::Client` is the Crystal library a program uses to ask the
+`tunnelgeist` daemon for a utun device.
+[examples/client.cr](../examples/client.cr) is a complete program.
+
+## Adding the shard
+
+The shard needs Crystal 1.22 or later and runs on macOS only. Add it to
+`shard.yml`:
+
+```yaml
+dependencies:
+  tunnelgeist:
+    github: jochenseeber/tunnelgeist
+```
+
+## Creating a device
+
+`Tunnelgeist::Client` asks the daemon for a device. `require "tunnelgeist"`
+loads the client and links no framework; only the daemon links Security.
+`Client.new` connects to `/var/run/tunnelgeist.sock`, and `Client.new(PATH)` to
+another socket.
+
+```crystal
+require "tunnelgeist"
+
+client = Tunnelgeist::Client.new # /var/run/tunnelgeist.sock
+device = client.create(
+  mtu: 1280,
+  addresses: [
+    Tunnelgeist::Address.new(
+      Socket::IPAddress.new("10.77.0.1", 0), prefix: 24, peer: Socket::IPAddress.new("10.77.0.2", 0)),
+  ],
+  routes: [Tunnelgeist::Prefix.parse("10.99.0.0/16")],
+)
+
+fd = device.fd # the utun descriptor; read and write packets on it
+device.add_route(Tunnelgeist::Prefix.parse("10.98.0.0/16"))
+puts "#{device.name} is up"
+```
+
+`create` returns a `Tunnelgeist::Client::Device` with the interface `name` (a
+`Tunnelgeist::InterfaceName`), a secret `key` (a `Tunnelgeist::Key`), the `mtu`
+and `fd`, the open utun descriptor. The descriptor belongs to the caller, who
+closes it; closing it removes the interface. It is blocking and has
+close-on-exec set. Each packet on it starts with a 4-byte address family
+header, as on any utun device. The address is the kernel's side of the
+interface; for IPv4 it takes a peer, the other side's address, and for IPv6
+none. `create` also takes a `name` (`Tunnelgeist::InterfaceName.new("utun7")`;
+by default any free unit). The device has `add_address`, `remove_address`,
+`add_route` and `remove_route`; each is one request that the key authorizes,
+and the daemon removes only what it added.
+
+## Handles and keys
+
+Another process can take over a device with `client.handle`, given its name and
+key. The handle has the four change operations and no descriptor;
+`device.to_handle` makes one from a device. `to_s` of a name or a key gives its
+text, and `inspect` of a key hides it:
+
+```crystal
+handle = client.handle(Tunnelgeist::InterfaceName.new("utun7"), key: Tunnelgeist::Key.new(key_text))
+handle.add_route(Tunnelgeist::Prefix.parse("10.97.0.0/16"))
+```
+
+`InterfaceName.new` and `Key.new` raise `ArgumentError` for text that is not
+`utunN` or not a key; `parse?` returns nil instead. The key is a bearer token:
+any process the daemon admits that holds it can change that device, within what
+its own client configurations allow, and it stops working when the device is
+gone or the daemon restarts.
+
+## Errors
+
+Every failure raises `Tunnelgeist::Client::Error`, an `IO::Error` whose
+`reason` is a `Tunnelgeist::Client::Error::Reason`:
+
+- `DaemonUnavailable`: the daemon is not running
+  (`tunnelgeist is not running or not installed`).
+- `ConnectionRefused`: the kernel refused the connection because the user is
+  not in the socket's group (`not permitted`).
+- `ConnectionFailed`: any other failure on the connection.
+- `Timeout`: no answer within `Client#timeout`, 10 seconds by default.
+- `InvalidReply`: the reply is not valid.
+- `Refused`: the daemon replied with an error, whose text is the message. It is
+  the refusal
+  `not permitted: not in group GROUP or not allowed by a client configuration`,
+  an item the configuration does not allow, such as
+  `address 10.99.0.1/24 not allowed` or `route 10.99.0.0/16 not allowed` (see
+  [Refusals](configuration.md#refusals)), or a failed command.
+- `NoDevice`: the reply to `create` carried no device.
+
+## Without the daemon
+
+A caller that is root needs no daemon. `Tunnelgeist::Device.create` opens the
+device itself and returns a `Tunnelgeist::Device::Utun` with the descriptor
+(`fd`) and the interface name (`name`):
+
+```crystal
+device = Tunnelgeist::Device.create # or create(Tunnelgeist::InterfaceName.new("utun7"), mtu: 1400)
+device.fd
+device.name
+```
+
+The interface is left down and without addresses. `Tunnelgeist::Commands`
+builds the `ifconfig` and `route` command lines that bring it up and give it
+addresses and routes, for a caller that runs them itself; it only builds them.
+
+## Protocol
+
+The daemon speaks one JSON line per request and per reply over its Unix socket
+and passes the descriptor with the reply. [protocol.md](protocol.md) describes
+it, so a client in another language can be written from that document alone.
+
+## Limits
+
+- A device allows 16 addresses and 64 routes.
+- The daemon reads a request within 5 seconds, and a request is at most 64 KiB.
+- The client gives up after 10 seconds (`Client#timeout`).
+- The daemon exits after 30 idle seconds with no device open; launchd starts it
+  again on the next request.

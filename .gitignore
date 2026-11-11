@@ -1,0 +1,14 @@
+.DS_Store
+.remember/
+.ruby-lsp/
+.shards/
+.superpowers/
+.tmp/
+.work/
+*.tmp
+*~
+/bin/
+/docs/superpowers/
+/lib/
+\#*\#
+tmp/

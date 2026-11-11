@@ -1,0 +1,11 @@
+{
+    "name": "vpn",
+    "signatures": [
+        "anchor apple generic and identifier \"com.example.vpn\" and certificate leaf[subject.OU] = \"ABCDE12345\""
+    ],
+    "addresses": [
+        { "network": "10.8.0.0/24", "peer": "10.8.0.0/24" },
+        { "network": "fd00:8::/64" }
+    ],
+    "routes": ["10.20.0.0/16", "10.21.0.0/16", "fd00:20::/48"]
+}
