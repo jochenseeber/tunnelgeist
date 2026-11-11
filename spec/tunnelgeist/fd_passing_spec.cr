@@ -1,28 +1,11 @@
 require "../spec_helper"
 require "../../src/tunnelgeist/fd_passing"
+require "./support/descriptor_sender"
 
 # `SCM_RIGHTS` descriptor passing over a Unix stream socket pair.
 describe Tunnelgeist::FdPassing do
   {% if flag?(:darwin) %}
-    alias LibSocket = Tunnelgeist::FdPassing::LibSocket
-
-    # Sends *data* with every descriptor of *fds* in one control message,
-    # which `FdPassing.send` itself does not do.
-    def send_many(socket : UNIXSocket, *, data : Bytes, fds : Array(Int32)) : Nil
-      iov = LibSocket::Iovec.new(iov_base: data.to_unsafe.as(Void*), iov_len: data.size)
-      control = Bytes.new(12 + fds.size * 4)
-      header = control.to_unsafe.as(LibSocket::Cmsghdr*)
-      header.value.cmsg_len = control.size.to_u32
-      header.value.cmsg_level = LibC::SOL_SOCKET
-      header.value.cmsg_type = LibSocket::SCM_RIGHTS
-      fds.each_with_index { |fd, index| (control.to_unsafe + 12).as(Int32*)[index] = fd }
-      message = LibSocket::Msghdr.new
-      message.msg_iov = pointerof(iov)
-      message.msg_iovlen = 1
-      message.msg_control = control.to_unsafe.as(Void*)
-      message.msg_controllen = control.size.to_u32
-      raise "sendmsg failed" if LibSocket.sendmsg(socket.fd, pointerof(message), 0) != data.size
-    end
+    include TunnelgeistDescriptorSender
 
     # The descriptors currently open in this process.
     def open_descriptors : Int32
@@ -41,6 +24,7 @@ describe Tunnelgeist::FdPassing do
       assert(count == 3)
       assert(String.new(buffer[0, count]) == "hi\n")
       assert(received.fd)
+      assert(received.descriptor_count == 1)
 
       fd = received.fd!
       assert(fd != writer.fd)
@@ -68,6 +52,11 @@ describe Tunnelgeist::FdPassing do
       assert(Tunnelgeist::FdPassing::Received.new(size: 3, fd: 7).fd! == 7)
     end
 
+    test "a Received made without a descriptor count counts its descriptor" do
+      assert(Tunnelgeist::FdPassing::Received.new(size: 3, fd: nil).descriptor_count == 0)
+      assert(Tunnelgeist::FdPassing::Received.new(size: 3, fd: 7).descriptor_count == 1)
+    end
+
     test "data without a descriptor returns nil for the descriptor" do
       left, right = UNIXSocket.pair
 
@@ -78,6 +67,7 @@ describe Tunnelgeist::FdPassing do
 
       assert(String.new(buffer[0, count]) == "plain")
       assert(received.fd.nil?)
+      assert(received.descriptor_count == 0)
     ensure
       left.try(&.close)
       right.try(&.close)
@@ -108,6 +98,7 @@ describe Tunnelgeist::FdPassing do
 
       assert(count == 1)
       assert(received.fd)
+      assert(received.descriptor_count == 2)
       # The second writer's last copy was closed by receive, so its reader
       # sees end of file; the first one is still held open by *received*.
       assert(second_reader.read(Bytes.new(1)) == 0)
@@ -132,6 +123,7 @@ describe Tunnelgeist::FdPassing do
       # A control buffer too small for them would make the kernel install
       # every descriptor but report only those that fit, and the rest would
       # stay open and unreachable.
+      assert(received.descriptor_count == 200)
       assert(open_descriptors - before == 1)
       LibC.close(received.fd!)
       assert(open_descriptors == before)

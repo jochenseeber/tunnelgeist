@@ -13,6 +13,7 @@ require "./key"
 require "./protocol"
 require "./command_runner"
 require "./handler/admitted"
+require "./handler/request_line"
 require "./peer"
 require "./prefix"
 require "./refusal"
@@ -20,10 +21,12 @@ require "./registry"
 
 module Tunnelgeist
   # Serves one client connection (UA5, UP1 to UP7): admits the peer, reads
-  # one request line, judges its addresses and routes by the client
-  # configurations that apply to the peer (CA3), creates a device or changes
-  # one, writes one reply and closes the connection. Its collaborators are
-  # injected so the specs can replace them.
+  # one request line with the descriptors that came with it, judges its
+  # addresses and routes by the client configurations that apply to the
+  # peer (CA3), creates a device or changes one, writes one reply and closes
+  # the connection. A change must carry the device's descriptor, which the
+  # handler holds while it changes the device (RF1.1 to RF1.3). Its
+  # collaborators are injected so the specs can replace them.
   #
   # `handle` never raises: the daemon runs it in one fiber per connection
   # and a client error must not stop it. Every failure becomes an error
@@ -43,6 +46,9 @@ module Tunnelgeist
     # configured and before it is registered; the daemon passes
     # `DepartureWatcher#drain`, so a departure event about the previous
     # owner of a recycled name cannot remove the new entry.
+    # *descriptor_name* answers the interface name of the descriptor a
+    # change carries and raises `IO::Error` for one that is no utun device;
+    # by default the kernel's answer, `Device.name_of`.
     def initialize(@registry : Registry, *,
                    @create_device : (InterfaceName?, Int32) -> Device::Utun = ->(name : InterfaceName?, mtu : Int32) { Device.create(name, mtu: mtu) },
                    @run : CommandRunner::Run = CommandRunner.default,
@@ -51,6 +57,7 @@ module Tunnelgeist
                    @interface_index : InterfaceName -> UInt32 = ->(name : InterfaceName) { LibC.if_nametoindex(name.to_s) },
                    @request_timeout : Time::Span = Protocol::REQUEST_TIMEOUT,
                    @drain_departures : -> Nil = -> { },
+                   @descriptor_name : Int32 -> InterfaceName = ->(fd : Int32) { Device.name_of(fd) },
                    @log : Log)
       @refusal = "not permitted: not in group #{group} or not allowed by a client configuration"
     end
@@ -61,10 +68,15 @@ module Tunnelgeist
       admitted = permitted_peer(socket)
       return unless admitted
 
-      request = read_request(socket, peer: admitted.peer)
-      return unless request
+      line = read_line(socket, peer: admitted.peer)
+      return unless line
 
-      serve(socket, admitted: admitted, request: request)
+      begin
+        request = parse_request(socket, peer: admitted.peer, line: line)
+        serve(socket, admitted: admitted, request: request, line: line) if request
+      ensure
+        line.close
+      end
     rescue error
       # Only a failure in the handler itself reaches here; keep the daemon
       # alive.
@@ -130,55 +142,35 @@ module Tunnelgeist
       end
     end
 
-    # Reads and parses the one request line (UP1). Replies an error and
-    # returns nil when it is too long, missing or invalid, or does not
-    # arrive in full within `request_timeout`.
-    private def read_request(socket : UNIXSocket, *, peer : Peer) : Protocol::Request?
-      Protocol::Request.parse(read_line(socket))
+    # Reads the one request line (UP1) with its descriptors. Replies an
+    # error and returns nil when it is too long or missing, or does not
+    # arrive in full within `request_timeout`; the descriptors that came
+    # are closed then.
+    private def read_line(socket : UNIXSocket, *, peer : Peer) : RequestLine?
+      RequestLine.read(socket, timeout: @request_timeout)
     rescue IO::TimeoutError
       fail(socket, peer: peer, operation: nil, name: nil, message: "no request within #{@request_timeout.total_seconds} seconds")
     rescue error : Protocol::Error | IO::Error
       fail(socket, peer: peer, operation: nil, name: nil, message: error.message || "invalid request")
     end
 
-    # Reads up to the first newline under one deadline for the whole line:
-    # before each read the read timeout is set to the time left, so a client
-    # that drips bytes cannot hold the connection open. Reads at most one
-    # byte over `MAX_REQUEST`, which tells a line at the limit from a longer
-    # one. Bytes after the newline are ignored; end of stream ends the line.
-    private def read_line(socket : UNIXSocket) : String
-      deadline = Time.instant + @request_timeout
-      line = IO::Memory.new
-      chunk = Bytes.new(4_096)
-      loop do
-        remaining = deadline - Time.instant
-        raise IO::TimeoutError.new("Read timed out") unless remaining.positive?
-
-        socket.read_timeout = remaining
-        room = Protocol::MAX_REQUEST + 1 - line.size
-        count = socket.read(chunk[0, Math.min(chunk.size, room)])
-        break if count == 0
-
-        piece = chunk[0, count]
-        newline = piece.index('\n'.ord.to_u8)
-        if newline
-          line.write(piece[0, newline])
-          break
-        end
-        line.write(piece)
-        raise Protocol::Error.new("request longer than #{Protocol::MAX_REQUEST} bytes") if line.size > Protocol::MAX_REQUEST
-      end
-      raise Protocol::Error.new("no request") if line.size == 0
-
-      line.to_s
+    # Parses the request of *line*. Replies an error and returns nil when it
+    # is invalid.
+    private def parse_request(socket : UNIXSocket, *, peer : Peer, line : RequestLine) : Protocol::Request?
+      Protocol::Request.parse(line.text)
+    rescue error : Protocol::Error
+      fail(socket, peer: peer, operation: nil, name: nil, message: error.message || "invalid request")
     end
 
-    private def serve(socket : UNIXSocket, *, admitted : Admitted, request : Protocol::Request) : Nil
+    # Creates or changes a device as *request* says. A create takes no
+    # descriptor, so any that came with its *line* is closed first.
+    private def serve(socket : UNIXSocket, *, admitted : Admitted, request : Protocol::Request, line : RequestLine) : Nil
       case request
       when Protocol::Create
+        line.close
         create(socket, peer: admitted.peer, admission: admitted.admission, request: request)
       when Protocol::DeviceRequest
-        change(socket, peer: admitted.peer, admission: admitted.admission, request: request)
+        change(socket, peer: admitted.peer, admission: admitted.admission, request: request, line: line)
       end
     rescue error
       # Protocol::Error without a message keeps its historic text.
@@ -244,23 +236,32 @@ module Tunnelgeist
       end
     end
 
-    # Changes an address or route of a registered device (UP3). Under the
-    # registry mutex: checks the interface index (UA6), judges the item by
-    # *admission* (CA3), validates the change against the entry, runs the
-    # command and only then records it. A rejection or denial becomes an
+    # Changes an address or route of a registered device (UP3). First pins
+    # the device with the descriptor that came with *line*, which must be
+    # the device's own (RF1.2); any other raises `Protocol::Error` before
+    # the registry is asked. Then, under the registry mutex: checks the
+    # interface index (UA6, RF1.5), judges the item by *admission* (CA3),
+    # validates the change against the entry, runs the command and only
+    # then records it. The descriptor is closed once that is done, on every
+    # path, and before the reply (RF1.3). A rejection or denial becomes an
     # error reply and a log line like any failure; a denial's line names the
     # configurations that applied.
     private def change(socket : UNIXSocket, *, peer : Peer, admission : Authorizer::Admission,
-                       request : Protocol::DeviceRequest) : Nil
-      refused = @registry.with_entry(request.name, key: request.key) do |entry|
-        index = @interface_index.call(entry.name)
-        if index == 0 || index != entry.index
-          @registry.remove(entry.name)
-          @log.info { "#{describe_peer(peer)} op=#{request.operation.wire} name=#{entry.name} removed: interface index #{entry.index} now #{index}" }
-          Registry::Rejection.unknown_device
-        else
-          apply(peer: peer, admission: admission, entry: entry, request: request)
+                       request : Protocol::DeviceRequest, line : RequestLine) : Nil
+      refused = begin
+        line.pin(request.name, name_of: @descriptor_name)
+        @registry.with_entry(request.name, key: request.key) do |entry|
+          index = @interface_index.call(entry.name)
+          if index == 0 || index != entry.index
+            @registry.remove(entry.name)
+            @log.info { "#{describe_peer(peer)} op=#{request.operation.wire} name=#{entry.name} removed: interface index #{entry.index} now #{index}" }
+            Registry::Rejection.unknown_device
+          else
+            apply(peer: peer, admission: admission, entry: entry, request: request)
+          end
         end
+      ensure
+        line.close
       end
       if refused
         configs = refused.is_a?(Authorizer::Denial) ? admission.names : nil

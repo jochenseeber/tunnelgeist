@@ -19,6 +19,9 @@ class Tunnelgeist::Client
       Refused
       # An ok create reply that carries no name, key or descriptor.
       NoDevice
+      # A `Client::Handle` was asked for a change, which needs the device's
+      # descriptor that a handle does not hold. Nothing was sent.
+      NoDescriptor
     end
   end
 end

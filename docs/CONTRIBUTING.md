@@ -52,32 +52,33 @@ The tests are written with microtest and come in three sets:
 - The integration tests in `test/tunnelgeist/`, run by `rake test`, are the
   tests that need the system: the directory service (`staff`, `wheel`,
   `nogroup`), Security on the test binary, `plutil`, `git`, the programs
-  `CommandRunner` runs, the kernel event socket, the default configuration
-  path, the root-ness of the process, and `install` as root, which checks every
-  directory above the ones it writes in up to `/` and so needs a `$TMPDIR`
-  whose ancestors only root or you own and no one else may write. macOS's own
-  per-user `$TMPDIR` below `/private/var/folders` is one; a `TMPDIR` below
-  `/private/tmp`, which everyone may write, is not. They mirror the layout of
-  `spec/`; `test/test_helper.cr` sets up microtest and
+  `CommandRunner` runs, the kernel event socket, the kernel's answer to
+  `UTUN_OPT_IFNAME` for a descriptor that is no utun device, the default
+  configuration path, the root-ness of the process, and `install` as root,
+  which checks every directory above the ones it writes in up to `/` and so
+  needs a `$TMPDIR` whose ancestors only root or you own and no one else may
+  write. macOS's own per-user `$TMPDIR` below `/private/var/folders` is one; a
+  `TMPDIR` below `/private/tmp`, which everyone may write, is not. They mirror
+  the layout of `spec/`; `test/test_helper.cr` sets up microtest and
   `test/tunnelgeist/support/` holds their helpers. They run as you and change
   nothing on the system.
 - The daemon tests in `test/daemon/`, run by `rake test:daemon` and by nothing
   else. A `Tunnelgeist::Client` asks a real daemon for utun devices, and the
   tests read the ICMP echo request of `ping -c1 -t2 10.77.3.2` from
   `device.fd`, check the routes the daemon adds and removes, and check that
-  closing the device removes it and invalidates its key, and that the daemon
-  refuses an address and a route its configuration does not allow
-  (`10.99.0.1/24`, `10.99.0.0/16`) without creating a device. They need macOS
-  and root for the daemon only; the tests themselves run as you, as any client
-  does, and find the daemon's socket in `TUNNELGEIST_SOCKET`.
-  `rake test:daemon` builds the daemon and the tests, runs `sudo -v` (the one
-  password prompt) and writes the daemon's configuration to
-  `.work/root-config/config.json`, with `sudo install` so that root owns the
-  file and its directory, as the daemon requires. It names the socket
-  `.work/tunnelgeist.sock`, your primary group, and one client, `daemon-test`,
-  that allows addresses in `10.77.0.0/16` with peers there and routes to
-  `10.78.0.0/16` and `10.79.0.0/16`, and nothing else. The task starts the
-  daemon with
+  closing the device removes it, that the daemon refuses a change sent with
+  another device's descriptor, and that it refuses an address and a route its
+  configuration does not allow (`10.99.0.1/24`, `10.99.0.0/16`) without
+  creating a device. They need macOS and root for the daemon only; the tests
+  themselves run as you, as any client does, and find the daemon's socket in
+  `TUNNELGEIST_SOCKET`. `rake test:daemon` builds the daemon and the tests,
+  runs `sudo -v` (the one password prompt) and writes the daemon's
+  configuration to `.work/root-config/config.json`, with `sudo install` so that
+  root owns the file and its directory, as the daemon requires. It names the
+  socket `.work/tunnelgeist.sock`, your primary group, and one client,
+  `daemon-test`, that allows addresses in `10.77.0.0/16` with peers there and
+  routes to `10.78.0.0/16` and `10.79.0.0/16`, and nothing else. The task
+  starts the daemon with
   `sudo .work/tunnelgeist serve --config .work/root-config/config.json`, runs
   the tests as you with `TUNNELGEIST_SOCKET` set, then stops the daemon and
   removes the configuration and its directory with `sudo`, also when a step
@@ -146,11 +147,12 @@ parent's included, so that it works as the only file a program requires.
 Constants and helpers that several nested types share live in a file of their
 own, such as `protocol/common.cr`, and not in the parent's file. When requiring
 the parent at the top would load a subclass of the nested type before the type
-exists, the nested file requires the parent at its end: `client/handle.cr`
-does, because `client.cr` requires `client/device.cr` and `Client::Device`
-subclasses `Client::Handle`. A superclass that names its subclasses only inside
-method bodies, as `Protocol::Request.parse` does, does not require them; their
-files require it.
+exists, the nested file requires the parent at its end. `client/handle.cr`
+needs nothing of `client.cr`, and `client/device.cr`, whose `Client::Device`
+subclasses `Client::Handle` and calls `Client#exchange`, requires `client.cr`
+and `client/handle.cr` at its top. A superclass that names its subclasses only
+inside method bodies, as `Protocol::Request.parse` does, does not require them;
+their files require it.
 
 The lists below name the files of the top-level types, which bring their nested
 types along.
@@ -170,7 +172,7 @@ The library, which a program that depends on the shard gets with
   checked where it is parsed; `Key.generate` makes a new key.
 - `commands`: the `ifconfig` and `route` argument vectors.
 - `device` (with its bindings in `device/lib_utun`): opens a utun device as
-  root.
+  root, and reads the interface name of a utun descriptor.
 - `fd_passing` (bindings in `fd_passing/lib_socket`): sends and receives a
   descriptor over a Unix socket.
 - `protocol`: the requests and replies, with their validation. They are read
@@ -202,7 +204,9 @@ the daemon needs, and no library file requires any of these:
   `inherited_descriptors`): the accept loop, the request handler, the devices
   and keys, and the watcher that drops a device when its interface goes away.
   `handler/admitted` pairs an admitted peer with its admission, which judges
-  the items of its request.
+  the items of its request, and `handler/request_line` reads the request line
+  with the descriptors that came with it and pins the device a change names
+  with its descriptor.
 - `peer`, `membership`, `signature_policy`, `config`, `authorizer`,
   `entitlement`, `refusal`, and their bindings `lib_system`, `lib_bsm`,
   `lib_cf` and `lib_security`: the peer checks. `config` is the parsed
@@ -244,9 +248,10 @@ and `examples_spec.cr` for the configuration in `examples/config`;
 client configurations and admissions by hand for the specs of the authorizer,
 the handler, the server, the client and the configuration holder,
 `fake_membership.cr` and `fake_peer.cr` stand in for the group and the peer,
-and `temporary_directory.cr` makes the temporary directories. A spec reads
-fixtures from the project itself, such as `examples/config` and
-`docs/protocol.md`, and writes only below its temporary directory.
+`descriptor_sender.cr` sends several descriptors in one message, and
+`temporary_directory.cr` makes the temporary directories. A spec reads fixtures
+from the project itself, such as `examples/config` and `docs/protocol.md`, and
+writes only below its temporary directory.
 
 `test/test_helper.cr` does the same for the integration tests in
 `test/tunnelgeist/`, named `*_test.cr` after the spec of the same source file;

@@ -20,6 +20,9 @@ connection carries one request and one reply, then closes.
   left out.
 - Every request carries `"version": 1` and an `"op"`. Unknown fields, in the
   request and in an address, are rejected by name.
+- A request that changes a device carries the device's descriptor; see
+  [Changing a device](#changing-a-device). The daemon closes any descriptor
+  that comes with another request.
 
 In the examples below, a line with an `"op"` is a request and any other line is
 a reply. Both are printed exactly as the library writes them.
@@ -56,8 +59,35 @@ compressed:
 ```
 
 The judgment uses the peer making the request, not the one that created the
-device: a process that holds a key may only add what its own configurations
-allow.
+device: a process that holds a device's descriptor and key may only add what
+its own configurations allow.
+
+## Changing a device
+
+`add_address`, `remove_address`, `add_route` and `remove_route` change a device
+the daemon created. Each request line is sent in one `sendmsg` that carries the
+device's open descriptor as `SCM_RIGHTS` ancillary data, exactly one, the way
+the `create` reply carries it to the client. The client keeps its own copy.
+
+The daemon takes the interface name of the descriptor from the kernel
+(`getsockopt` with `SYSPROTO_CONTROL` and `UTUN_OPT_IFNAME`) and refuses the
+request before it looks up the device when the request carries no descriptor,
+more than one, one that is not a utun device, or the descriptor of another
+device than the request's `name`:
+
+<!-- dprint-ignore -->
+```json
+{"ok":false,"error":"request must carry the device's descriptor"}
+{"ok":false,"error":"request must carry only the device's descriptor"}
+{"ok":false,"error":"descriptor is not a utun device"}
+{"ok":false,"error":"descriptor is utun8, not utun7"}
+```
+
+The daemon holds the descriptor until the change is made and recorded, and
+closes it before it replies, also when the change fails. While it holds it, the
+kernel cannot remove the interface and give its name to a new device, so the
+command changes the device the client holds. Once the daemon has closed it, the
+client's own copy again decides how long the device lives.
 
 ## Operations
 
@@ -184,8 +214,8 @@ interfaces exist:
 ## Keys
 
 The key is 32 random bytes from the system's secure generator, encoded as
-unpadded base64url: 43 characters. It is a bearer token. Any process the daemon
-admits that holds it may change that device, within what its own client
-configurations allow, which lets a client pass it to another process. The
-daemon compares keys in constant time and never writes one to its log; a client
-should not either.
+unpadded base64url: 43 characters. A change needs it and the device's
+descriptor: any process the daemon admits that holds both may change that
+device, within what its own client configurations allow, which lets a client
+pass both to another process. The daemon compares keys in constant time and
+never writes one to its log; a client should not either.

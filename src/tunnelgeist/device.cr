@@ -36,7 +36,7 @@ module Tunnelgeist
       begin
         mark_close_on_exec(fd)
         connect(fd, unit: unit)
-        assigned = interface_name(fd)
+        assigned = name_of(fd)
         set_mtu(assigned, mtu: mtu)
       rescue ex
         LibC.close(fd)
@@ -77,9 +77,15 @@ module Tunnelgeist
       end
     end
 
-    # Reads the name of the interface the connect created with
-    # UTUN_OPT_IFNAME.
-    private def interface_name(fd : Int32) : InterfaceName
+    # The name of the utun interface whose control socket is *fd*, read from
+    # the kernel with `UTUN_OPT_IFNAME`. Needs no privileges, so the daemon
+    # can check which device a descriptor a client sent belongs to. Raises
+    # `IO::Error` when *fd* is no connected utun control socket: with the
+    # system's message when the kernel refuses the option (a pipe, an
+    # unconnected control socket, an inet socket), and saying that the
+    # answer is not a utun name otherwise. A Unix socket answers the option
+    # number for `LOCAL_PEERPID`, with 4 bytes that are no name.
+    def name_of(fd : Int32) : InterfaceName
       buffer = StaticArray(UInt8, LibUtun::IFNAMSIZ).new(0_u8)
       size = LibC::SocklenT.new(LibUtun::IFNAMSIZ)
       if LibC.getsockopt(fd, LibUtun::SYSPROTO_CONTROL, LibUtun::UTUN_OPT_IFNAME, buffer.to_unsafe.as(Void*), pointerof(size)) < 0

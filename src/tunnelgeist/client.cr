@@ -18,9 +18,9 @@ require "./client/reply_line"
 module Tunnelgeist
   # The client of the root daemon `tunnelgeist` (TA2). An unprivileged
   # program asks it for a utun device, receives the descriptor over the
-  # Unix socket and later adds or removes addresses and routes with the
-  # key of the device. The client does not wrap the descriptor: it
-  # belongs to the caller.
+  # Unix socket and later adds or removes addresses and routes, sending
+  # the descriptor and the key of the device with each change. The client
+  # does not wrap the descriptor: it belongs to the caller.
   #
   # Every call opens its own connection and exchanges one request line
   # and one reply line. This file does not require anything of the
@@ -67,27 +67,33 @@ module Tunnelgeist
       Device.new(self, name: device_name, key: key, mtu: mtu, fd: fd)
     end
 
-    # The handle of the device *name* made earlier, with its *key*. No check
-    # that the device exists until the first call.
+    # The handle of the device *name* made earlier, with its *key*. A handle
+    # holds no descriptor, and the daemon changes a device only for a
+    # request that carries the device's descriptor, so the changes of the
+    # handle raise `Error` with reason `NoDescriptor`.
     def handle(name : InterfaceName, *, key : Key) : Handle
       Handle.new(self, name: name, key: key)
     end
 
-    protected def exchange(request : Protocol::Request) : Nil
-      fd = exchange_with_descriptor(request).fd
-      LibC.close(fd) if fd
+    # Sends *request* with the device's descriptor *fd* attached, in the same
+    # `sendmsg` as the request line; the daemon refuses a change without it.
+    # *fd* stays open: it belongs to the caller.
+    protected def exchange(request : Protocol::DeviceRequest, *, fd : Int32) : Nil
+      received = exchange_with_descriptor(request, fd: fd).fd
+      LibC.close(received) if received
     end
 
-    # Sends *request* and returns the ok reply and the descriptor that came
-    # with it, if any, as an `Exchange`. Every failure raises `Error`, closing
-    # a descriptor that arrived: an error reply, a timeout, and any
-    # `IO::Error` of the connection, such as `EPIPE` when the daemon closes
-    # before the request is written or a failed `recvmsg`.
-    private def exchange_with_descriptor(request : Protocol::Request) : Exchange
+    # Sends *request*, with *fd* attached when given, and returns the ok
+    # reply and the descriptor that came with it, if any, as an `Exchange`.
+    # Every failure raises `Error`, closing a descriptor that arrived: an
+    # error reply, a timeout, and any `IO::Error` of the connection, such as
+    # `EPIPE` when the daemon closes before the request is written, a
+    # failed `sendmsg` or `recvmsg`.
+    private def exchange_with_descriptor(request : Protocol::Request, *, fd : Int32? = nil) : Exchange
       deadline = Time.instant + @timeout
       socket = connect
       begin
-        write_request(socket, request: request, deadline: deadline)
+        write_request(socket, request: request, fd: fd, deadline: deadline)
         checked_reply(read_reply(socket, deadline: deadline))
       rescue error : IO::TimeoutError
         raise Error.new(timeout_message, reason: Error::Reason::Timeout, cause: error)
@@ -101,10 +107,18 @@ module Tunnelgeist
     end
 
     # Writes *request* as one line, within the time left until *deadline*.
-    private def write_request(socket : UNIXSocket, *, request : Protocol::Request, deadline : Time::Instant) : Nil
+    # With *fd*, the line goes in one `sendmsg` that carries the descriptor;
+    # a change request is far smaller than the socket's send buffer, so the
+    # kernel takes it whole.
+    private def write_request(socket : UNIXSocket, *, request : Protocol::Request, fd : Int32?, deadline : Time::Instant) : Nil
       socket.write_timeout = time_left(deadline)
-      socket.write("#{request.to_json}\n".to_slice)
-      socket.flush
+      data = "#{request.to_json}\n".to_slice
+      if fd
+        FdPassing.send(socket, data: data, fd: fd)
+      else
+        socket.write(data)
+        socket.flush
+      end
     end
 
     # The reply in *received* with its descriptor as an `Exchange` when it

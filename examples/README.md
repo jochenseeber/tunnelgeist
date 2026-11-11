@@ -25,10 +25,9 @@ so `rake spec` fails when one of them stops loading.
 ## Client library
 
 `client.cr` asks the daemon for a device with an address and a route, adds and
-removes a second route, once through the device and once through a handle made
-from its name and key, and closes the device. Its addresses and routes are
-allowed by `config/clients.d/vm.json` and by the starter configuration
-`tunnelgeist install` writes.
+removes a second route through the device, and closes the device. Its addresses
+and routes are allowed by `config/clients.d/vm.json` and by the starter
+configuration `tunnelgeist install` writes.
 
 In a program that depends on the shard, `require "tunnelgeist"` finds the
 library. Inside this repository, `rake examples:build` builds the example

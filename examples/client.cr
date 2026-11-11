@@ -24,12 +24,9 @@ end
 
 puts "#{device.name} is up with descriptor #{device.fd}"
 
-# Each change is one request; the device's key authorizes it.
+# Each change is one request that carries the device's descriptor and key.
 device.add_route(Tunnelgeist::Prefix.parse("192.168.65.128/25"))
-
-# Another process could change the device with its name and key.
-handle = client.handle(device.name, key: device.key)
-handle.remove_route(Tunnelgeist::Prefix.parse("192.168.65.128/25"))
+device.remove_route(Tunnelgeist::Prefix.parse("192.168.65.128/25"))
 
 # Closing the descriptor removes the interface.
 LibC.close(device.fd)

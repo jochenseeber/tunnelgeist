@@ -74,9 +74,10 @@ module Tunnelgeist
     end
 
     # Reads into *buffer* and returns the number of bytes read (0 at end of
-    # stream) and the descriptor that came with them, or nil, as a
-    # `Received`. The descriptor has close-on-exec set; descriptors beyond
-    # the first are closed. Waits for data while the socket is empty and raises
+    # stream), the descriptor that came with them, or nil, and the number of
+    # descriptors that came, as a `Received`. The descriptor has
+    # close-on-exec set; descriptors beyond the first are closed, so a
+    # caller that wants one can tell that more came. Waits for data while the socket is empty and raises
     # `IO::TimeoutError` when `socket.read_timeout` elapses first. Raises
     # `IO::Error` on a failure or when the kernel truncated the control
     # data (the received descriptors are closed), which the size of the
@@ -93,8 +94,9 @@ module Tunnelgeist
       loop do
         count = LibSocket.recvmsg(socket.fd, pointerof(message), 0)
         if count >= 0
-          descriptor = take_descriptor(socket, message: message, control: control.to_unsafe.as(UInt8*))
-          received = Received.new(size: count.to_i32, fd: descriptor)
+          descriptors = collect_descriptors(message: message, control: control.to_unsafe.as(UInt8*))
+          descriptor = take_descriptor(descriptors, socket: socket, message: message)
+          received = Received.new(size: count.to_i32, fd: descriptor, descriptor_count: descriptors.size)
           return received
         end
 
@@ -109,11 +111,10 @@ module Tunnelgeist
       end
     end
 
-    # The first descriptor of the received control data, with close-on-exec
-    # set; the others are closed. Raises when the data was truncated,
-    # closing what arrived.
-    private def take_descriptor(socket : UNIXSocket, *, message : LibSocket::Msghdr, control : UInt8*) : Int32?
-      descriptors = collect_descriptors(message: message, control: control)
+    # The first of *descriptors*, the received control data of *message*,
+    # with close-on-exec set; the others are closed. Raises when the data
+    # was truncated, closing what arrived.
+    private def take_descriptor(descriptors : Array(Int32), *, socket : UNIXSocket, message : LibSocket::Msghdr) : Int32?
       if (message.msg_flags & LibSocket::MSG_CTRUNC) != 0
         descriptors.each { |descriptor| LibC.close(descriptor) }
         raise IO::Error.new("recvmsg: control data truncated", target: socket)

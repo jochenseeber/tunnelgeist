@@ -49,26 +49,26 @@ header, as on any utun device. The address is the kernel's side of the
 interface; for IPv4 it takes a peer, the other side's address, and for IPv6
 none. `create` also takes a `name` (`Tunnelgeist::InterfaceName.new("utun7")`;
 by default any free unit). The device has `add_address`, `remove_address`,
-`add_route` and `remove_route`; each is one request that the key authorizes,
-and the daemon removes only what it added.
+`add_route` and `remove_route`; each is one request that carries the device's
+descriptor and key, and the daemon removes only what it added. The daemon
+checks that the descriptor is the device's and holds it while it changes the
+device, so the device cannot go away in the middle of a change; the descriptor
+stays open in the caller.
 
 ## Handles and keys
 
-Another process can take over a device with `client.handle`, given its name and
-key. The handle has the four change operations and no descriptor;
-`device.to_handle` makes one from a device. `to_s` of a name or a key gives its
-text, and `inspect` of a key hides it:
-
-```crystal
-handle = client.handle(Tunnelgeist::InterfaceName.new("utun7"), key: Tunnelgeist::Key.new(key_text))
-handle.add_route(Tunnelgeist::Prefix.parse("10.97.0.0/16"))
-```
+`client.handle`, given a device's name and key, and `device.to_handle` make a
+`Tunnelgeist::Client::Handle`: the name and key without the descriptor. A
+handle cannot change its device. The daemon changes a device only for a request
+that carries the device's descriptor, so the four change operations of a handle
+raise `Tunnelgeist::Client::Error` with reason `NoDescriptor` and send nothing;
+only the `Tunnelgeist::Client::Device` that `create` returned changes the
+device. `to_s` of a name or a key gives its text, and `inspect` of a key hides
+it.
 
 `InterfaceName.new` and `Key.new` raise `ArgumentError` for text that is not
-`utunN` or not a key; `parse?` returns nil instead. The key is a bearer token:
-any process the daemon admits that holds it can change that device, within what
-its own client configurations allow, and it stops working when the device is
-gone or the daemon restarts.
+`utunN` or not a key; `parse?` returns nil instead. The key stops working when
+the device is gone or the daemon restarts.
 
 ## Errors
 
@@ -87,8 +87,12 @@ Every failure raises `Tunnelgeist::Client::Error`, an `IO::Error` whose
   `not permitted: not in group GROUP or not allowed by a client configuration`,
   an item the configuration does not allow, such as
   `address 10.99.0.1/24 not allowed` or `route 10.99.0.0/16 not allowed` (see
-  [Refusals](configuration.md#refusals)), or a failed command.
+  [Refusals](configuration.md#refusals)), a descriptor the daemon does not take
+  for the device's (see [Changing a device](protocol.md#changing-a-device)), or
+  a failed command.
 - `NoDevice`: the reply to `create` carried no device.
+- `NoDescriptor`: a `Handle` was asked for a change, which needs the device's
+  descriptor; nothing was sent.
 
 ## Without the daemon
 
@@ -108,9 +112,10 @@ addresses and routes, for a caller that runs them itself; it only builds them.
 
 ## Protocol
 
-The daemon speaks one JSON line per request and per reply over its Unix socket
-and passes the descriptor with the reply. [protocol.md](protocol.md) describes
-it, so a client in another language can be written from that document alone.
+The daemon speaks one JSON line per request and per reply over its Unix socket,
+passes the descriptor with the reply to `create` and takes it back with each
+change. [protocol.md](protocol.md) describes it, so a client in another
+language can be written from that document alone.
 
 ## Limits
 

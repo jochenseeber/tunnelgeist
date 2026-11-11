@@ -7,6 +7,7 @@ require "../test_helper"
 require "socket"
 require "../../src/tunnelgeist/client"
 require "../../src/tunnelgeist/commands"
+require "../../src/tunnelgeist/fd_passing"
 
 describe TunnelgeistDaemon do
   {% if flag?(:darwin) %}
@@ -35,7 +36,7 @@ describe TunnelgeistDaemon do
       assert(!routed_via?("10.78.0.1", name: device.name))
     end
 
-    test "closing the descriptor removes the device and the daemon refuses its key" do
+    test "closing the descriptor removes the device, which then cannot be changed" do
       device = create_device
       name = device.name
       open_device(device).close
@@ -43,13 +44,14 @@ describe TunnelgeistDaemon do
       wait_until { !interface?(name) }
       assert(!interface?(name))
 
-      error = raised(Tunnelgeist::Client::Error) do
+      # The closed number goes to the connection's socket or nowhere, so the
+      # daemon refuses the descriptor or the client cannot send it.
+      raised(Tunnelgeist::Client::Error) do
         device.add_route(Tunnelgeist::Prefix.parse("10.78.1.0/24"))
       end
-      assert(error.message.to_s.includes?(Tunnelgeist::Protocol::UNKNOWN_DEVICE))
     end
 
-    test "a new device that takes the name of a closed one is not reachable with the old key" do
+    test "a new device that takes the name of a closed one is changed with its own descriptor only" do
       old = create_device
       old_name = old.name
       old_key = old.key
@@ -62,11 +64,31 @@ describe TunnelgeistDaemon do
       error = raised(Tunnelgeist::Client::Error) do
         client.handle(old_name, key: old_key).add_route(Tunnelgeist::Prefix.parse("10.79.2.0/24"))
       end
-      assert(error.message.to_s.includes?(Tunnelgeist::Protocol::UNKNOWN_DEVICE))
+      assert(error.reason.no_descriptor?)
 
       assert(!routed_via?("10.79.2.1", name: fresh.name))
       fresh.add_route(Tunnelgeist::Prefix.parse("10.79.2.0/24"))
       assert(routed_via?("10.79.2.1", name: fresh.name))
+    end
+
+    test "a change sent with another device's descriptor is refused and changes neither" do
+      first = create_device
+      second = create_device
+      route = Tunnelgeist::Prefix.parse("10.79.3.0/24")
+      request = Tunnelgeist::Protocol::AddRoute.new(name: first.name, key: first.key, route: route)
+
+      socket = UNIXSocket.new(socket_path)
+      reply = begin
+        Tunnelgeist::FdPassing.send(socket, data: "#{request.to_json}\n".to_slice, fd: second.fd)
+        socket.read_timeout = 5.seconds
+        Tunnelgeist::Protocol::Reply.parse(socket.gets.to_s)
+      ensure
+        socket.close
+      end
+
+      assert(reply == Tunnelgeist::Protocol::Reply.new(ok: false, error: "descriptor is #{second.name}, not #{first.name}"))
+      assert(!routed_via?("10.79.3.1", name: first.name))
+      assert(!routed_via?("10.79.3.1", name: second.name))
     end
 
     test "the daemon refuses an address outside its configuration and creates no device" do
@@ -139,7 +161,12 @@ describe TunnelgeistDaemon do
     end
 
     def client : Tunnelgeist::Client
-      Tunnelgeist::Client.new(ENV["TUNNELGEIST_SOCKET"]? || raise "set TUNNELGEIST_SOCKET to the daemon's socket")
+      Tunnelgeist::Client.new(socket_path)
+    end
+
+    # The daemon's socket, from TUNNELGEIST_SOCKET.
+    def socket_path : String
+      ENV["TUNNELGEIST_SOCKET"]? || raise "set TUNNELGEIST_SOCKET to the daemon's socket"
     end
 
     # The wrapper of the device's descriptor, made by `create_device`; closing

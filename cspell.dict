@@ -22,6 +22,7 @@ ctliocginfo
 ctrunc
 datagram
 dgram
+dontwait
 dseditgroup
 dspec
 dupfd
@@ -46,6 +47,7 @@ euid
 fcntl
 finalizer
 forall
+fstat
 getegid
 geteuid
 getfd
@@ -98,6 +100,7 @@ osname
 ostype
 otool
 pcre
+peerpid
 peertoken
 pgrep
 pipefail

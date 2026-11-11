@@ -31,7 +31,8 @@ describe TunnelgeistClient do
     end
 
     # A daemon on a short socket path: one fiber per accepted connection runs
-    # `Handler#handle`. The fake device is one end of a datagram socketpair.
+    # `Handler#handle`. The fake device is one end of a datagram socketpair,
+    # whose name the fake name lookup knows by its inode.
     class Daemon
       getter path : String
       # The temporary directory that holds the socket.
@@ -41,6 +42,11 @@ describe TunnelgeistClient do
       # The kernel's end of each fake device.
       getter peers = [] of IO::FileDescriptor
       getter registry = Tunnelgeist::Registry.new
+      # The names the fake name lookup gave the descriptors it was asked
+      # about, one per change request that carried one.
+      getter verified = [] of Tunnelgeist::InterfaceName
+      # The name of each fake device, by the inode of the client's end.
+      @device_names = {} of UInt64 => Tunnelgeist::InterfaceName
 
       def initialize
         directory = TunnelgeistTemporaryDirectory.create_temporary_directory
@@ -79,7 +85,20 @@ describe TunnelgeistClient do
           admit: ->(_peer : Tunnelgeist::Peer) { TunnelgeistClientConfigs.open_admission },
           group: "tunnelgeist",
           interface_index: ->(_name : Tunnelgeist::InterfaceName) { 21_u32 },
+          descriptor_name: ->(fd : Int32) { descriptor_name(fd) },
           log: Log.new("test", Log::MemoryBackend.new, :debug))
+      end
+
+      private def descriptor_name(fd : Int32) : Tunnelgeist::InterfaceName
+        name = @device_names[inode(fd)]? || raise IO::Error.new("UTUN_OPT_IFNAME: Invalid argument")
+        @verified << name
+        name
+      end
+
+      # The inode of *fd*, which every copy of a descriptor shares.
+      private def inode(fd : Int32) : UInt64
+        raise IO::Error.from_errno("fstat") unless LibC.fstat(fd, out stat) == 0
+        stat.st_ino.to_u64
       end
 
       private def create_device(name : Tunnelgeist::InterfaceName?) : Tunnelgeist::Device::Utun
@@ -90,7 +109,9 @@ describe TunnelgeistClient do
         peer.sync = true
         peer.read_buffering = false
         @peers << peer
-        Tunnelgeist::Device::Utun.new(fd: fds[0], name: name || UTUN9)
+        device_name = name || UTUN9
+        @device_names[inode(fds[0])] = device_name
+        Tunnelgeist::Device::Utun.new(fd: fds[0], name: device_name)
       end
     end
 
@@ -129,42 +150,55 @@ describe TunnelgeistClient do
       end
     end
 
-    test "add_route and remove_route succeed on a created device and on its handle" do
+    test "every change of a device carries its descriptor, which the daemon checks" do
       with_daemon do |daemon|
         device = Client.new(daemon.path).create
         begin
           prefix = Tunnelgeist::Prefix.parse("10.88.0.0/16")
+          address = Tunnelgeist::Address.new(Socket::IPAddress.new("fd77::2", 0), prefix: 64)
           device.add_route(prefix)
           device.remove_route(prefix)
-          assert(daemon.commands.size >= 2)
+          device.add_address(address)
+          device.remove_address(address)
 
-          handle = device.to_handle
-          assert(!handle.is_a?(Client::Device))
-          assert(handle.name == device.name)
-          assert(handle.key == device.key)
-          before = daemon.commands.size
-          handle.add_route(prefix)
-          handle.remove_route(prefix)
-          assert(daemon.commands.size >= before + 2)
+          assert(daemon.verified == [UTUN9] * 4)
+          assert(daemon.commands.includes?(Tunnelgeist::Commands.add_route(prefix, name: UTUN9)))
+          assert(daemon.commands.includes?(Tunnelgeist::Commands.add_address(address, name: UTUN9)))
+          assert(daemon.commands.includes?(Tunnelgeist::Commands.remove_address(address, name: UTUN9)))
+          flags = LibC.fcntl(device.fd, LibC::F_GETFD)
+          assert(flags != -1)
         ensure
           LibC.close(device.fd)
         end
       end
     end
 
-    test "a handle made from a name and a key reaches the device" do
+    test "a handle cannot change its device and asks the daemon nothing" do
       with_daemon do |daemon|
-        created = Client.new(daemon.path).create
+        device = Client.new(daemon.path).create
         begin
-          handle = Client.new(daemon.path).handle(created.name, key: created.key)
+          handles = [device.to_handle, Client.new(daemon.path).handle(device.name, key: device.key)]
           prefix = Tunnelgeist::Prefix.parse("10.89.0.0/16")
+          address = Tunnelgeist::Address.new(Socket::IPAddress.new("fd77::2", 0), prefix: 64)
           before = daemon.commands.size
-          handle.add_route(prefix)
 
-          assert(daemon.commands.size == before + 1)
-          assert(daemon.commands.last == Tunnelgeist::Commands.add_route(prefix, name: created.name))
+          handles.each do |handle|
+            assert(!handle.is_a?(Client::Device))
+            errors = [
+              raised(Client::Error) { handle.add_route(prefix) },
+              raised(Client::Error) { handle.remove_route(prefix) },
+              raised(Client::Error) { handle.add_address(address) },
+              raised(Client::Error) { handle.remove_address(address) },
+            ]
+            errors.each do |error|
+              assert(error.reason.no_descriptor?)
+              assert(error.message == "a handle cannot change utun9: a change needs the device's descriptor")
+            end
+          end
+          assert(daemon.commands.size == before)
+          assert(daemon.verified.empty?)
         ensure
-          LibC.close(created.fd)
+          LibC.close(device.fd)
         end
       end
     end
@@ -186,13 +220,17 @@ describe TunnelgeistClient do
       end
     end
 
-    test "a wrong key raises Client::Error with the unknown device text" do
+    test "a device the daemon no longer knows raises Client::Error with the unknown device text" do
       with_daemon do |daemon|
-        error = raised(Client::Error) do
-          Client.new(daemon.path).handle(UTUN9, key: Tunnelgeist::Key.new("x" * 43)).add_route(Tunnelgeist::Prefix.parse("10.88.0.0/16"))
+        device = Client.new(daemon.path).create
+        begin
+          daemon.registry.remove(device.name)
+          error = raised(Client::Error) { device.add_route(Tunnelgeist::Prefix.parse("10.88.0.0/16")) }
+          assert(error.message == Protocol::UNKNOWN_DEVICE)
+          assert(error.reason.refused?)
+        ensure
+          LibC.close(device.fd)
         end
-        assert(error.message == Protocol::UNKNOWN_DEVICE)
-        assert(error.reason.refused?)
       end
     end
 
@@ -349,7 +387,6 @@ describe TunnelgeistClient do
       assert(error.message.to_s.starts_with?("tunnelgeist connection failed: "))
       assert(error.cause.is_a?(ArgumentError))
       assert(error.reason.connection_failed?)
-      raised(Client::Error) { Client.new(long_path).handle(UTUN9, key: Tunnelgeist::Key.new("x" * 43)).add_route(Tunnelgeist::Prefix.parse("10.88.0.0/16")) }
     end
 
     test "a descriptor that arrives with an error reply is closed" do
