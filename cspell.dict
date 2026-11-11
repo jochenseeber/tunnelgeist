@@ -52,6 +52,7 @@ getfd
 getfl
 getgrnam
 getpwnam
+getrlimit
 getsockname
 getsockopt
 gids
@@ -83,6 +84,7 @@ nametoindex
 nilable
 nodoc
 nofd
+nofile
 nogroup
 nomemory
 nonblock
@@ -108,10 +110,13 @@ rdonly
 realpath
 recvmsg
 rindex
+rlim
+rlimit
 seeber
 sendmsg
 setfd
 setfl
+setrlimit
 siocsifmtu
 siocskevfilt
 sockaddr

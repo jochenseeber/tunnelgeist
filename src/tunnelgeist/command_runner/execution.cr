@@ -24,13 +24,18 @@ module Tunnelgeist
       # program cannot be started. Every descriptor above 2 is closed in the
       # child, whoever opened it.
       def self.start(argv : Array(String), *, input : String?, output_limit : Int32) : self
-        output_reader, output_writer = IO.pipe(write_blocking: true)
-        error_reader, error_writer = IO.pipe(write_blocking: true)
-        input_reader, input_writer = input ? IO.pipe(read_blocking: true) : {nil, nil}
+        # Declared before the `begin`, so that a failure closes the pipes
+        # made before it.
+        output_reader = output_writer = error_reader = error_writer = nil
+        input_reader = input_writer = nil
         begin
+          output_reader, output_writer = IO.pipe(write_blocking: true)
+          error_reader, error_writer = IO.pipe(write_blocking: true)
+          input_reader, input_writer = IO.pipe(read_blocking: true) if input
           InheritedDescriptors.mark_close_on_exec
           process = Process.new(argv[0], argv[1..], env: {} of String => String, clear_env: true,
             input: input_reader || Process::Redirect::Close, output: output_writer, error: error_writer)
+          new(process, output: output_reader, error: error_reader, input: input_writer, text: input, output_limit: output_limit)
         rescue error
           [output_reader, error_reader, input_writer].each(&.try(&.close))
           raise error
@@ -39,8 +44,6 @@ module Tunnelgeist
           # open after the child ended.
           [output_writer, error_writer, input_reader].each(&.try(&.close))
         end
-
-        new(process, output: output_reader, error: error_reader, input: input_writer, text: input, output_limit: output_limit)
       end
 
       # The parent's end of the program's standard input, nil when it reads

@@ -5,6 +5,14 @@ require "../../src/tunnelgeist/command_runner"
 # error, and bounds its time, its output and how many run at once (RF2); it
 # runs the system's programs (`/bin/sh`, `/bin/test`, `/bin/cat`,
 # `/bin/sleep`, `/usr/bin/yes`, `/usr/bin/head`).
+{% if flag?(:darwin) %}
+  # `setrlimit`, which the standard library does not bind, to run out of
+  # descriptors on purpose.
+  lib TunnelgeistTestResourceLimit
+    fun setrlimit(resource : LibC::Int, limit : LibC::Rlimit*) : LibC::Int
+  end
+{% end %}
+
 describe TunnelgeistCommandRunner do
   {% if flag?(:darwin) %}
     alias CommandRunner = Tunnelgeist::CommandRunner
@@ -142,6 +150,39 @@ describe TunnelgeistCommandRunner do
       when timeout(5.seconds)
         raise "no slot was free after five failed starts"
       end
+    end
+
+    # The descriptors below 1024 open in this process.
+    def open_descriptors : Array(Int32)
+      (0...1_024).select { |fd| LibC.fcntl(fd, LibC::F_GETFD) != -1 }
+    end
+
+    # Runs the block with the soft descriptor limit at *limit*.
+    def with_descriptor_limit(limit : UInt64, &) : Nil
+      raise IO::Error.from_errno("getrlimit") unless LibC.getrlimit(LibC::RLIMIT_NOFILE, out original) == 0
+
+      lowered = LibC::Rlimit.new(rlim_cur: limit, rlim_max: original.rlim_max)
+      raise IO::Error.from_errno("setrlimit") unless TunnelgeistTestResourceLimit.setrlimit(LibC::RLIMIT_NOFILE, pointerof(lowered)) == 0
+
+      begin
+        yield
+      ensure
+        TunnelgeistTestResourceLimit.setrlimit(LibC::RLIMIT_NOFILE, pointerof(original))
+      end
+    end
+
+    test "a run that runs out of descriptors for its pipes closes the ones it made" do
+      CommandRunner.run(["/usr/bin/true"])
+      before = open_descriptors
+      free = (0...1_024).reject { |fd| before.includes?(fd) }
+      # Room for the first pipe and one end of the second.
+      limit = (free[2] + 1).to_u64
+
+      with_descriptor_limit(limit) do
+        raised(IO::Error) { CommandRunner.run(["/usr/bin/true"]) }
+      end
+
+      assert(open_descriptors == before)
     end
 
     test "input past what the program reads does not stop the run" do
