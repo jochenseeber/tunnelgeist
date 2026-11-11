@@ -5,6 +5,7 @@ require "log"
 require "socket"
 require "./prefix"
 require "./address"
+require "./device"
 require "./fd_passing"
 require "./interface_name"
 require "./protocol"
@@ -22,7 +23,9 @@ module Tunnelgeist
   #
   # Every call opens its own connection and exchanges one request line
   # and one reply line. This file does not require anything of the
-  # daemon, so a program that links the library does not link `Security`.
+  # daemon, so a program that links the library does not link `Security`;
+  # `Tunnelgeist::Device` is the kernel side of a utun device, which needs
+  # neither.
   class Client
     # The socket the daemon listens on unless told otherwise.
     DEFAULT_SOCKET = Protocol::DEFAULT_SOCKET
@@ -62,6 +65,22 @@ module Tunnelgeist
       end
 
       Device.new(self, name: device_name, mtu: mtu, fd: fd)
+    end
+
+    # The device whose utun descriptor *fd* is, for a process that received
+    # the descriptor from the one that created the device; its changes send
+    # *fd*. The name comes from *fd* itself (`Tunnelgeist::Device.name_of`),
+    # never from the caller, because the daemon refuses a descriptor of any
+    # device but the one the request names. The MTU is unknown, so `mtu` is
+    # nil. *fd* stays the caller's, who closes it. Nothing is sent to the
+    # daemon.
+    #
+    # The lookup's errors pass unchanged, not as `Error`, since no daemon
+    # was asked: `IO::Error` when *fd* is no connected utun control socket,
+    # and `Tunnelgeist::Device::ControlLookupError` when the utun control
+    # itself cannot be looked up.
+    def device(fd : Int32) : Device
+      Device.new(self, name: Tunnelgeist::Device.name_of(fd), mtu: nil, fd: fd)
     end
 
     # Sends *request* with the device's descriptor *fd* attached, in the same

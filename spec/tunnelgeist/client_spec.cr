@@ -129,7 +129,7 @@ describe TunnelgeistClient do
         device = Client.new(daemon.path).create(mtu: 1_280)
         begin
           assert(device.name == UTUN9)
-          assert(device.mtu == 1_280)
+          assert(device.mtu! == 1_280)
           flags = LibC.fcntl(device.fd, LibC::F_GETFD)
           assert(flags != -1)
           assert((flags & LibC::FD_CLOEXEC) != 0)

@@ -126,6 +126,27 @@ describe TunnelgeistDaemon do
       end
     end
 
+    test "a device wrapped from a received copy of its descriptor is changed through that copy" do
+      device = create_device
+      sender, receiver = UNIXSocket.pair
+      received = begin
+        Tunnelgeist::FdPassing.send(sender, data: "d".to_slice, fd: device.fd)
+        Tunnelgeist::FdPassing.receive(receiver, buffer: Bytes.new(1)).fd || raise "no descriptor arrived"
+      ensure
+        sender.close
+        receiver.close
+      end
+      @files[received] = IO::FileDescriptor.new(received)
+
+      wrapped = client.device(received)
+
+      assert(wrapped.name == device.name)
+      assert(wrapped.fd == received)
+      assert(wrapped.mtu.nil?)
+      wrapped.add_route(Tunnelgeist::Prefix.parse("10.79.5.0/24"))
+      assert(routed_via?("10.79.5.1", name: device.name))
+    end
+
     test "the daemon keeps at most 16 devices of one user and takes a new one once one is closed" do
       bare = [] of Tunnelgeist::Address
       devices = Array.new(16) { create_device(addresses: bare, routes: [] of Tunnelgeist::Prefix) }

@@ -7,8 +7,9 @@ require "./interface_name"
 
 module Tunnelgeist
   # Opens the kernel side of a utun device, and tells which utun device a
-  # descriptor belongs to. The daemon that hands the descriptor to another
-  # process calls it.
+  # descriptor belongs to: the daemon creates devices with it and checks the
+  # descriptors clients send, and `Client#device` names a device from a
+  # descriptor the process received.
   module Device
     extend self
 

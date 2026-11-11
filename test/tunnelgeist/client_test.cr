@@ -11,6 +11,20 @@ describe TunnelgeistClient do
 
     alias Client = Tunnelgeist::Client
 
+    test "device refuses a descriptor that is no utun with the lookup's own error and connects nowhere" do
+      reader, writer = IO.pipe
+      begin
+        error = raised(IO::Error) { Client.new("/nonexistent/tunnelgeist.sock").device(reader.fd) }
+
+        assert(!error.is_a?(Client::Error))
+        assert(error.os_error == Errno::ENOTSOCK)
+        assert(!reader.closed?)
+      ensure
+        reader.close
+        writer.close
+      end
+    end
+
     test "a socket the caller may not connect to raises Client::Error with the connection refused" do
       # Root may connect regardless of the mode, so the refusal needs an
       # unprivileged process.

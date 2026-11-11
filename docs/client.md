@@ -62,17 +62,20 @@ in the middle of a change; the descriptor stays open in the caller.
 Holding the descriptor is what lets a process change the device. To let another
 process change it, pass it the descriptor, over a Unix socket
 (`Tunnelgeist::FdPassing.send`) or by inheritance. The receiving process takes
-it with `Tunnelgeist::FdPassing.receive` and reads the device's name from it
-with `Tunnelgeist::Device.name_of`. For each change it connects to the daemon's
-socket, builds a request such as `Tunnelgeist::Protocol::AddRoute` with that
-name, sends the request's JSON line with the descriptor attached through
-`FdPassing.send`, and reads the reply line with
-`Tunnelgeist::Protocol::Reply.parse`, as
-[Changing a device](protocol.md#changing-a-device) describes. The daemon judges
-the change by that process's own client configurations. Code that wraps a
-received descriptor takes the name from `Device.name_of`, never from the
-caller, because the daemon refuses a descriptor of any device but the one the
-request names.
+it with `Tunnelgeist::FdPassing.receive` and wraps it with `Client#device`:
+
+```crystal
+device = Tunnelgeist::Client.new.device(fd)
+device.add_route(Tunnelgeist::Prefix.parse("10.99.0.0/16"))
+```
+
+`Client#device` reads the device's name from the descriptor itself, because the
+daemon refuses a descriptor of any device but the one the request names. The
+wrapped device's `mtu` is nil: the descriptor does not tell it. A descriptor
+that is no utun device raises the `IO::Error` of the lookup, not
+`Tunnelgeist::Client::Error`, before anything is sent. The descriptor stays the
+caller's to close. The daemon judges each change by the receiving process's own
+client configurations.
 
 ## Errors
 

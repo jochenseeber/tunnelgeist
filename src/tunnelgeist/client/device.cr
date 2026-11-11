@@ -7,22 +7,30 @@ require "../prefix"
 require "../protocol"
 
 class Tunnelgeist::Client
-  # A device `create` made: its name and its utun descriptor. The descriptor
+  # A device `create` made, or one `device` wrapped from a descriptor the
+  # process received: its name and its utun descriptor. The descriptor
   # goes with every change, so the daemon knows the request comes from the
   # device's holder and holds the device while it changes it; holding the
   # descriptor is what lets a process change the device.
   class Device
     # The name the kernel gave the device.
     getter name : InterfaceName
-    # The utun descriptor, owned by the caller, who closes it. It has
-    # close-on-exec set and is blocking: `FdPassing.receive` leaves the
-    # flags of the open file description as the daemon made it, and the
-    # daemon makes it blocking.
+    # The utun descriptor, owned by the caller, who closes it. One from
+    # `create` has close-on-exec set and is blocking: `FdPassing.receive`
+    # leaves the flags of the open file description as the daemon made it,
+    # and the daemon makes it blocking.
     getter fd : Int32
-    # The MTU the device was created with.
-    getter mtu : Int32
+    # The MTU the device was created with; nil for a device `device`
+    # wrapped, since the descriptor does not tell it.
+    getter mtu : Int32?
 
-    protected def initialize(@client : Client, *, @name : InterfaceName, @mtu : Int32, @fd : Int32)
+    protected def initialize(@client : Client, *, @name : InterfaceName, @mtu : Int32?, @fd : Int32)
+    end
+
+    # The MTU the device was created with; raises `NilAssertionError` for a
+    # device `device` wrapped.
+    def mtu! : Int32
+      @mtu || raise NilAssertionError.new("the MTU of #{@name} is unknown: it was wrapped from a received descriptor")
     end
 
     # Adds *address* to the device. Raises `Client::Error` when the daemon

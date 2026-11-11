@@ -48,6 +48,7 @@ emfile
 enfile
 enoent
 enotdir
+enotsock
 entrycount
 envp
 eopnotsupp
