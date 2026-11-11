@@ -1,3 +1,4 @@
+require "c/fcntl"
 require "c/sys/stat"
 require "system/user"
 require "../../test_helper"
@@ -60,6 +61,11 @@ describe Tunnelgeist::Config::TrustedDirectory do
     # The error reading the file at *path* through the walk raises.
     def read_error(path : String) : Config::Error
       raised(Config::Error) { read(path) }
+    end
+
+    # The descriptors open in this process, of the first 1024.
+    def open_descriptors : Array(Int32)
+      (0...1024).select { |fd| LibC.fcntl(fd, LibC::F_GETFD) != -1 }
     end
 
     # Adds the ACL entry *entry* to *path* with `chmod +a`.
@@ -272,6 +278,20 @@ describe Tunnelgeist::Config::TrustedDirectory do
         TrustedDirectory.open(names(File.join(directory, "d")), owner: euid) do |parent|
           assert(parent.names.sort == [".a.json", "b.json", "sub"])
           assert(parent.names.sort == [".a.json", "b.json", "sub"])
+        end
+      end
+    end
+
+    test "descend keeps the descriptor it duplicates for the same directory close-on-exec" do
+      with_directory do |directory|
+        TrustedDirectory.open(names(directory), owner: euid) do |parent|
+          before = open_descriptors
+          parent.descend([] of String) do |_same|
+            added = open_descriptors - before
+
+            assert(added.size == 1)
+            assert(added.all? { |fd| LibC.fcntl(fd, LibC::F_GETFD) & LibC::FD_CLOEXEC != 0 })
+          end
         end
       end
     end

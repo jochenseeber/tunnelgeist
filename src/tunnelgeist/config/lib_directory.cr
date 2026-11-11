@@ -13,11 +13,12 @@ module Tunnelgeist
     lib LibDirectory
       # Fails the open unless the path names a directory (sys/fcntl.h).
       O_DIRECTORY = 0x00100000
+      # The `fcntl` command that duplicates a descriptor with `FD_CLOEXEC`
+      # set (sys/fcntl.h).
+      F_DUPFD_CLOEXEC = 67
 
       # Opens *path* relative to the directory descriptor *fd* (fcntl.h).
       fun openat(fd : ::LibC::Int, path : ::LibC::Char*, oflag : ::LibC::Int, ...) : ::LibC::Int
-      # A new descriptor for the open file of *fd* (unistd.h).
-      fun dup(fd : ::LibC::Int) : ::LibC::Int
 
       # A directory stream on the directory descriptor *fd*, which the
       # stream then owns: `closedir` closes it (dirent.h), and the status

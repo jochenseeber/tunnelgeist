@@ -273,9 +273,10 @@ module Tunnelgeist
         end
       end
 
-      # A new descriptor for this directory, which the caller closes.
+      # A new descriptor for this directory, which the caller closes,
+      # close-on-exec like every other the walk opens.
       private def duplicate : Int32
-        fd = LibDirectory.dup(@fd)
+        fd = LibC.fcntl(@fd, LibDirectory::F_DUPFD_CLOEXEC, 0)
         raise Error.new("cannot be duplicated: #{Errno.value.message}", file: @path) if fd < 0
         fd
       end
