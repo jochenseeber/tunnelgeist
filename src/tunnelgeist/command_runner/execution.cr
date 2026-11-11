@@ -1,0 +1,166 @@
+{% skip_file unless flag?(:darwin) %}
+
+require "./bounded_buffer"
+require "./result"
+require "../inherited_descriptors"
+
+module Tunnelgeist
+  module CommandRunner
+    # One run of a program: the child process, the pipes of its standard
+    # input, output and error, and the fibers that feed and drain them.
+    # `CommandRunner.run` starts one with `.start` and collects it with
+    # `#finish`.
+    class Execution
+      # How long a program has to end after `TERM` before it gets `KILL`.
+      TERMINATION_GRACE = 1.second
+
+      # Bytes read from a pipe at a time.
+      CHUNK_SIZE = 4_096
+
+      # Starts *argv* by absolute path, without a shell and with an empty
+      # environment, with *input* as its standard input when given and the
+      # null device otherwise; keeps at most *output_limit* bytes of each of
+      # its standard output and standard error. Raises `IO::Error` when the
+      # program cannot be started. Every descriptor above 2 is closed in the
+      # child, whoever opened it.
+      def self.start(argv : Array(String), *, input : String?, output_limit : Int32) : self
+        output_reader, output_writer = IO.pipe(write_blocking: true)
+        error_reader, error_writer = IO.pipe(write_blocking: true)
+        input_reader, input_writer = input ? IO.pipe(read_blocking: true) : {nil, nil}
+        begin
+          InheritedDescriptors.mark_close_on_exec
+          process = Process.new(argv[0], argv[1..], env: {} of String => String, clear_env: true,
+            input: input_reader || Process::Redirect::Close, output: output_writer, error: error_writer)
+        rescue error
+          [output_reader, error_reader, input_writer].each(&.try(&.close))
+          raise error
+        ensure
+          # The child holds its own copies; the parent's would keep the pipes
+          # open after the child ended.
+          [output_writer, error_writer, input_reader].each(&.try(&.close))
+        end
+
+        new(process, output: output_reader, error: error_reader, input: input_writer, text: input, output_limit: output_limit)
+      end
+
+      # The parent's end of the program's standard input, nil when it reads
+      # the null device.
+      @input : IO::FileDescriptor?
+
+      # Whether `#stop` closed the pipes, so that their readers expect a
+      # closed stream.
+      @stopped = false
+
+      # The parent's ends of the program's pipes, which `#stop` closes.
+      @pipes : Array(IO::FileDescriptor)
+      @output : BoundedBuffer
+      @error : BoundedBuffer
+      @drained = Channel(IO::Error?).new(2)
+      @finished = Channel(Process::Status | Exception).new(1)
+
+      private def initialize(@process : Process, *, output : IO::FileDescriptor, error : IO::FileDescriptor,
+                             input : IO::FileDescriptor?, text : String?, output_limit : Int32)
+        @input = input
+        @pipes = [output, error, input].compact
+        @output = BoundedBuffer.new(limit: output_limit)
+        @error = BoundedBuffer.new(limit: output_limit)
+        spawn { drain(output, into: @output) }
+        spawn { drain(error, into: @error) }
+        if input && text
+          spawn { feed(input, text: text) }
+        end
+        spawn { await }
+      end
+
+      # Waits for the program to end and its output to be drained, at most
+      # *timeout*. A program still running then is sent `TERM`, and `KILL`
+      # after `TERMINATION_GRACE`; it is always reaped. The `Result` keeps
+      # the output read until then.
+      def finish(timeout : Time::Span) : Result
+        timed_out = false
+        outcome = select
+        when finished = @finished.receive
+          finished
+        when timeout(timeout)
+          timed_out = true
+          stop
+        end
+        # A process the program started may still hold its standard input
+        # and keep `#feed` waiting.
+        @input.try(&.close)
+        raise outcome if outcome.is_a?(Exception)
+
+        Result.new(exit_status: outcome.exit_code? || -1, output: @output.text, error: @error.text,
+          timed_out_after: timed_out ? timeout : nil)
+      end
+
+      # Ends a program that ran out of time and returns what `#await`
+      # reports. A program that already ended, but whose output a process it
+      # started still holds open, is not signalled: its pid may have been
+      # reused.
+      private def stop : Process::Status | Exception
+        unless @process.terminated?
+          signal(Signal::TERM)
+          select
+          when finished = @finished.receive
+            return finished
+          when timeout(TERMINATION_GRACE)
+            signal(Signal::KILL) unless @process.terminated?
+          end
+        end
+        @stopped = true
+        @pipes.each(&.close)
+        @finished.receive
+      end
+
+      # Sends *signal* to the program; one that ended meanwhile is no error.
+      private def signal(signal : Signal) : Nil
+        @process.signal(signal)
+      rescue error : RuntimeError
+        raise error unless error.os_error == Errno::ESRCH
+      end
+
+      # Reaps the program, waits until both pipes are drained and reports the
+      # exit status, or the first error.
+      private def await : Nil
+        status = @process.wait
+        errors = Array.new(2) { @drained.receive }.compact
+        @finished.send(errors.first? || status)
+      rescue error
+        @finished.send(error)
+      end
+
+      # Reads *io* until its end into *buffer*, which drops what exceeds its
+      # limit, so the program never blocks on a full pipe.
+      private def drain(io : IO::FileDescriptor, *, into buffer : BoundedBuffer) : Nil
+        failure = nil
+        bytes = Bytes.new(CHUNK_SIZE)
+        begin
+          loop do
+            count = io.read(bytes)
+            break if count == 0
+
+            buffer.append(bytes[0, count])
+          end
+        rescue error : IO::Error
+          # `#stop` closes the pipes to end a read that a process the program
+          # started keeps waiting.
+          failure = error unless @stopped
+        end
+        io.close
+        @drained.send(failure)
+      end
+
+      # Writes *text* to the program's standard input and closes it.
+      private def feed(io : IO::FileDescriptor, *, text : String) : Nil
+        io.sync = true
+        io.write(text.to_slice)
+      rescue IO::Error
+        # The program closed its standard input or ended before reading all
+        # of it; its exit status says whether that was a failure.
+      ensure
+        io.close
+      end
+    end
+  end
+end

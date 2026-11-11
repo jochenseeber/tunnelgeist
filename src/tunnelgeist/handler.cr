@@ -330,11 +330,12 @@ module Tunnelgeist
       entry.remove_route(route)
     end
 
-    # Runs *argv*; raises `Protocol::Error` with the program, its exit status
-    # and its standard error when it fails (UP6).
+    # Runs *argv*; raises `Protocol::Error` when it fails, with the program,
+    # its exit status and its standard error (UP6), or the program's name
+    # and the time limit it ran out of (RF2.1).
     private def run!(argv : Array(String)) : Nil
       result = @run.call(argv)
-      raise Protocol::Error.new("#{argv[0]} exited #{result.exit_status}: #{result.error.strip}") unless result.success?
+      raise Protocol::Error.new(result.failure(argv[0])) unless result.success?
     end
 
     # Logs a failed request and replies its error; returns nil. A nil

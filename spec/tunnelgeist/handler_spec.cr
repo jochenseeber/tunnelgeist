@@ -42,6 +42,8 @@ describe TunnelgeistHandler do
       getter peers = [] of Tunnelgeist::Peer
       # The program whose runs fail, with exit status 1.
       property failing : String? = nil
+      # The program whose runs time out, nil when none does.
+      property timing_out : String? = nil
       # What the fake authorizer answers for every peer; by default one
       # configuration that allows every address and route.
       property admission : Admission = TunnelgeistClientConfigs.open_admission
@@ -97,6 +99,10 @@ describe TunnelgeistHandler do
           output = @route_get
           reply = output ? result(0, output: output, error: "") : result(1, output: "", error: "route: writing to routing socket: not in table\n")
           return reply
+        end
+        if argv[0] == @timing_out
+          timed_out = Tunnelgeist::CommandRunner::Result.new(exit_status: -1, output: "", error: "", timed_out_after: 10.seconds)
+          return timed_out
         end
         argv[0] == @failing ? result(1, output: "", error: "#{File.basename(argv[0])}: File exists\n") : result(0, output: "", error: "")
       end
@@ -275,6 +281,17 @@ describe TunnelgeistHandler do
         Commands.add_address(v4(2), name: UTUN9),
         Commands.add_route(route("10.99.0.0/16"), name: UTUN9),
       ])
+    end
+
+    test "create with an ifconfig that runs out of time replies the timeout and registers nothing" do
+      fixture = HandlerFixture.new
+      fixture.timing_out = "/sbin/ifconfig"
+
+      reply = exchange(fixture, request: line(Protocol::Create.new(name: UTUN9, mtu: 1_280, addresses: [v4(2)], routes: [] of Tunnelgeist::Prefix))).reply
+
+      assert(!reply.ok)
+      assert(reply.error == "ifconfig timed out after 10 s")
+      assert(fixture.registry.empty?)
     end
 
     test "a failed create of a unit the kernel chose logs the interface name" do

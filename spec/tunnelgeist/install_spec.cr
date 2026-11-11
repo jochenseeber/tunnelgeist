@@ -63,6 +63,10 @@ describe TunnelgeistInstall do
       Tunnelgeist::CommandRunner::Result.new(exit_status: status, output: "", error: error)
     end
 
+    def timed_out : Tunnelgeist::CommandRunner::Result
+      Tunnelgeist::CommandRunner::Result.new(exit_status: -1, output: "", error: "", timed_out_after: 10.seconds)
+    end
+
     # The outcome of one `install` or `uninstall`.
     record Outcome, status : Int32, output : String, error : String do
       def lines : Array(String)
@@ -374,6 +378,16 @@ describe TunnelgeistInstall do
         ])
         assert(!File.exists?(layout.paths.plist))
         assert(!File.exists?(layout.paths.binary))
+      end
+    end
+
+    test "uninstall reports a launchctl bootout that ran out of time without guessing why" do
+      with_layout do |layout|
+        recorder = Recorder.new { timed_out }
+        outcome = uninstall(installer(layout, recorder: recorder))
+
+        assert(outcome.status == 0)
+        assert(outcome.lines.first == "launchctl bootout timed out after 10 s")
       end
     end
 

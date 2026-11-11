@@ -92,10 +92,12 @@ module Tunnelgeist
     end
 
     # Nil when `plutil -lint` accepts *xml* on its standard input, else what
-    # it reports.
+    # it reports, or that it ran out of time.
     def self.lint(xml : String) : String?
       result = CommandRunner.run([PLUTIL, "-lint", "-"], input: xml)
-      result.success? ? nil : "#{result.output}#{result.error}".strip
+      return if result.success?
+
+      result.timed_out? ? result.outcome : "#{result.output}#{result.error}".strip
     end
 
     # Installs and loads the daemon; returns the exit code. Refuses unless
@@ -211,7 +213,7 @@ module Tunnelgeist
 
       result = run(DSEDITGROUP, "-o", "create", group)
       unless result.success?
-        raise Failure.new("#{DSEDITGROUP} -o create #{group} exited #{result.exit_status}: #{result.error.strip}",
+        raise Failure.new("#{DSEDITGROUP} -o create #{group} #{result.outcome}",
           program: DSEDITGROUP, exit_status: result.exit_status)
       end
 
@@ -388,16 +390,18 @@ module Tunnelgeist
     # since the daemon may not be loaded; it is reported on *output*.
     private def bootout(output : IO) : Nil
       result = run(LAUNCHCTL, "bootout", "system/#{LABEL}")
-      unless result.success?
-        output.puts "launchctl bootout exited #{result.exit_status}: #{result.error.strip} (not loaded?)"
-      end
+      return if result.success?
+
+      # A daemon that is not loaded makes `launchctl` fail, not hang.
+      hint = result.timed_out? ? "" : " (not loaded?)"
+      output.puts "launchctl bootout #{result.outcome}#{hint}"
     end
 
     private def launchctl!(*arguments : String) : Nil
       result = run(LAUNCHCTL, *arguments)
       return if result.success?
 
-      raise Failure.new("#{LAUNCHCTL} #{arguments.join(' ')} exited #{result.exit_status}: #{result.error.strip}",
+      raise Failure.new("#{LAUNCHCTL} #{arguments.join(' ')} #{result.outcome}",
         program: LAUNCHCTL, exit_status: result.exit_status)
     end
 

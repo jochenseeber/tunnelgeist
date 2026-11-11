@@ -1,32 +1,58 @@
 {% skip_file unless flag?(:darwin) %}
 
+require "./command_runner/execution"
 require "./command_runner/result"
-require "./inherited_descriptors"
 
 module Tunnelgeist
-  # Runs the argument vectors of `Commands` for the handler
-  # (UC4): by absolute path, without a shell, with an empty environment.
+  # Runs the argument vectors of `Commands` for the handler and the programs
+  # of `Install` (UC4): by absolute path, without a shell, with an empty
+  # environment, and bounded in time, output and number (RF2).
   module CommandRunner
+    # How long a program may run before it is stopped (RF2.1).
+    COMMAND_TIMEOUT = 10.seconds
+
+    # How many bytes of each of a program's standard output and standard
+    # error are kept (RF2.2).
+    COMMAND_OUTPUT_LIMIT = 4_096
+
+    # How many programs run at once in the whole daemon; a further run waits
+    # for one of them to end (RF2.3).
+    COMMAND_CONCURRENCY = 4
+
+    # One token per program running: a run sends one before it starts its
+    # program, which blocks while all are taken, and receives it back when
+    # the program has ended.
+    SLOTS = Channel(Nil).new(COMMAND_CONCURRENCY)
+
     # Runs an argument vector and returns its `Result`.
     alias Run = Array(String) -> Result
 
-    # The runner of the daemon. Standard input is the null device; a
-    # program killed by a signal reports exit status -1.
+    # The runner of the daemon, with the limits above. Standard input is
+    # the null device; a program killed by a signal, also for running out
+    # of time, reports exit status -1.
     def self.default : Run
       ->(argv : Array(String)) { run(argv) }
     end
 
-    # Runs *argv*, with *input* as its standard input when given; raises
-    # `IO::Error` when the program cannot be started. Every descriptor above 2
-    # is closed in the child, whoever opened it.
-    def self.run(argv : Array(String), *, input : String? = nil) : Result
-      output = IO::Memory.new
-      error = IO::Memory.new
-      InheritedDescriptors.mark_close_on_exec
-      stdin = input ? IO::Memory.new(input) : Process::Redirect::Close
-      status = Process.run(argv[0], argv[1..], env: {} of String => String, clear_env: true, input: stdin,
-        output: output, error: error)
-      Result.new(exit_status: status.exit_code? || -1, output: output.to_s, error: error.to_s)
+    # Runs *argv*, with *input* as its standard input when given, and
+    # returns its `Result` once it has ended; raises `IO::Error` when the
+    # program cannot be started. Every descriptor above 2 is closed in the
+    # child, whoever opened it.
+    #
+    # The run waits while `COMMAND_CONCURRENCY` other programs run. A
+    # program still running after *timeout* is sent `TERM`, and `KILL` a
+    # second later, and is reaped; its result is timed out. Of each of
+    # standard output and standard error the first *output_limit* bytes are
+    # kept and the rest is read and dropped.
+    def self.run(argv : Array(String), *, input : String? = nil, timeout : Time::Span = COMMAND_TIMEOUT,
+                 output_limit : Int32 = COMMAND_OUTPUT_LIMIT) : Result
+      SLOTS.send(nil)
+      begin
+        execution = Execution.start(argv, input: input, output_limit: output_limit)
+        execution.finish(timeout)
+      ensure
+        SLOTS.receive
+      end
     end
   end
 end
