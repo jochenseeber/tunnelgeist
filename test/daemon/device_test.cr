@@ -20,7 +20,7 @@ describe TunnelgeistDaemon do
     # test waits for its devices to go before the next one starts.
     after do
       @files.each_value { |file| file.close unless file.closed? }
-      @names.each { |name| wait_until { !interface?(name) } }
+      @names.each { |name| wait_until_gone(name) }
     end
 
     test "the kernel's ping arrives on the device and its route goes when removed" do
@@ -47,8 +47,7 @@ describe TunnelgeistDaemon do
       name = device.name
       open_device(device).close
 
-      wait_until { !interface?(name) }
-      assert(!interface?(name))
+      wait_until_gone(name)
 
       # The closed number goes to the connection's socket or nowhere, so the
       # daemon refuses the descriptor or the client cannot send it.
@@ -61,7 +60,7 @@ describe TunnelgeistDaemon do
       old = create_device
       old_name = old.name
       open_device(old).close
-      wait_until { !interface?(old_name) }
+      wait_until_gone(old_name)
 
       fresh = create_device(old_name)
       assert(fresh.name == old_name)
@@ -123,7 +122,7 @@ describe TunnelgeistDaemon do
         assert(!routed_via?("10.79.4.1", name: second.name))
 
         open_device(second).close
-        wait_until { !interface?(name) }
+        wait_until_gone(name)
       end
     end
 
@@ -142,7 +141,7 @@ describe TunnelgeistDaemon do
 
       closed = devices.first
       open_device(closed).close
-      wait_until { !interface?(closed.name) }
+      wait_until_gone(closed.name)
 
       fresh = create_device(addresses: bare, routes: [] of Tunnelgeist::Prefix)
       assert(interface?(fresh.name))
@@ -330,11 +329,14 @@ describe TunnelgeistDaemon do
       Process.run("/sbin/ifconfig", [name.to_s], output: Process::Redirect::Close, error: Process::Redirect::Close).success?
     end
 
-    # The daemon learns of a departure from an asynchronous kernel event.
-    def wait_until(timeout : Time::Span = 2.seconds, &condition : -> Bool) : Nil
+    # Waits until the kernel has removed the interface *name*, which it
+    # does a moment after the device's last descriptor is closed; raises,
+    # naming the interface, when it is still there after *timeout*, so a
+    # test fails where the device stayed and not in a later one.
+    def wait_until_gone(name : Tunnelgeist::InterfaceName, *, timeout : Time::Span = 2.seconds) : Nil
       started = Time.instant
-      until condition.call
-        return if started.elapsed > timeout
+      while interface?(name)
+        raise "#{name} is still there #{timeout.total_seconds} s after its device was closed" if started.elapsed > timeout
         sleep 20.milliseconds
       end
     end
