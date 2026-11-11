@@ -241,11 +241,13 @@ when no configuration admits it, or `address ADDRESS not allowed` or
 `route ROUTE not allowed` for an item no configuration allows. The daemon logs
 the reason to `/var/log/tunnelgeist.log`.
 
-It logs `refused check=group` for a process outside the main group, and
-`refused check=config` followed by one `NAME=REASON` pair per client
-configuration otherwise, where the reason is `users`, `groups`, `requirement`,
-`debugged`, `debuggable`, `hardened runtime`, `entitlements unreadable` or
-`entitlement NAME`. A reason of several words is quoted, as in
-`refused check=config default=users vpn="hardened runtime"`. A refused address
-or route is logged with `configs=` and the names of the configurations that
-applied.
+It logs `refused check=connections` for a process whose user has the most
+connections open that the daemon serves for one user (see the limits in
+[the protocol](protocol.md#limits)), `refused check=group` for a process
+outside the main group, and `refused check=config` followed by one
+`NAME=REASON` pair per client configuration otherwise, where the reason is
+`users`, `groups`, `requirement`, `debugged`, `debuggable`, `hardened runtime`,
+`entitlements unreadable` or `entitlement NAME`. A reason of several words is
+quoted, as in `refused check=config default=users vpn="hardened runtime"`. A
+refused address or route is logged with `configs=` and the names of the
+configurations that applied.

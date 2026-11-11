@@ -200,10 +200,13 @@ the daemon needs, and no library file requires any of these:
   `departure_watcher/lib_kernel_event`), `command_runner` (with
   `inherited_descriptors`): the accept loop, the request handler, the registry
   of the devices, and the watcher that drops a device when its interface goes
-  away. `handler/admitted` pairs an admitted peer with its admission, which
-  judges the items of its request, and `handler/request_line` reads the request
-  line with the descriptors that came with it and pins the device a change
-  names with its descriptor.
+  away. `registry/entry` is one device with its owner, `registry/reservation` a
+  device slot taken for a user before the device exists, which the device
+  limits count, and `registry/rejection` a change the registry refused.
+  `handler/admitted` pairs an admitted peer with its admission, which judges
+  the items of its request, and `handler/request_line` reads the request line
+  with the descriptors that came with it and pins the device a change names
+  with its descriptor.
 - `peer`, `membership`, `signature_policy`, `config`, `authorizer`,
   `entitlement`, `refusal`, and their bindings `lib_system`, `lib_bsm`,
   `lib_cf` and `lib_security`: the peer checks. `config` is the parsed

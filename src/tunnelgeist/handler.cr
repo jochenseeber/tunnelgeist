@@ -30,13 +30,26 @@ module Tunnelgeist
   # `handle` never raises: the daemon runs it in one fiber per connection
   # and a client error must not stop it. Every failure becomes an error
   # reply and one log line.
+  #
+  # It serves at most *max_connections_per_user* connections of one
+  # effective uid at a time (RF3); the server bounds the connections of all
+  # users, and the registry the devices.
   class Handler
+    # The most connections the handler serves at once for one user.
+    MAX_CONNECTIONS_PER_USER = 8
+
     # The failed check of a peer outside the main group.
     private GROUP_REFUSED = Refusal.new(reason: :group)
     # The failed check of a peer no client configuration applies to.
     private CONFIG_REFUSED = Refusal.new(reason: :config)
+    # The failed check of a peer whose user has too many connections open.
+    private CONNECTIONS_REFUSED = Refusal.new(reason: :connections)
 
     @refusal : String
+    # The connections being served, by the peer's effective uid; a uid
+    # without one has no key.
+    @connections = {} of UInt32 => Int32
+    @connections_lock = Mutex.new
 
     # *admit* answers which client configurations apply to a peer; the
     # daemon passes `Authorizer#admit`. *group* is the main group, named in
@@ -47,7 +60,8 @@ module Tunnelgeist
     # owner of a recycled name cannot remove the new entry.
     # *descriptor_name* answers the interface name of the descriptor a
     # change carries and raises `IO::Error` for one that is no utun device;
-    # by default the kernel's answer, `Device.name_of`.
+    # by default the kernel's answer, `Device.name_of`. The daemon keeps the
+    # default *max_connections_per_user*.
     def initialize(@registry : Registry, *,
                    @create_device : (InterfaceName?, Int32) -> Device::Utun = ->(name : InterfaceName?, mtu : Int32) { Device.create(name, mtu: mtu) },
                    @run : CommandRunner::Run = CommandRunner.default,
@@ -57,24 +71,30 @@ module Tunnelgeist
                    @request_timeout : Time::Span = Protocol::REQUEST_TIMEOUT,
                    @drain_departures : -> Nil = -> { },
                    @descriptor_name : Int32 -> InterfaceName = ->(fd : Int32) { Device.name_of(fd) },
+                   @max_connections_per_user : Int32 = MAX_CONNECTIONS_PER_USER,
                    @log : Log)
       @refusal = "not permitted: not in group #{group} or not allowed by a client configuration"
     end
 
-    # Serves the connection on *socket* and closes it.
+    # Serves the connection on *socket* and closes it. A peer whose user
+    # has `max_connections_per_user` connections being served gets
+    # `too many connections for uid U` before its admission is checked, so
+    # one user cannot keep the peer checks busy either.
     def handle(socket : UNIXSocket) : Nil
       socket.write_timeout = @request_timeout
-      admitted = permitted_peer(socket)
-      return unless admitted
+      peer = peer_of(socket)
+      return unless peer
 
-      line = read_line(socket, peer: admitted.peer)
-      return unless line
+      unless enter(peer.uid)
+        @log.warn { "#{describe_peer(peer)} refused check=#{CONNECTIONS_REFUSED}" }
+        reply(socket, peer: peer, reply: Protocol::Reply.new(ok: false, error: "too many connections for uid #{peer.uid}"))
+        return
+      end
 
       begin
-        request = parse_request(socket, peer: admitted.peer, line: line)
-        serve(socket, admitted: admitted, request: request, line: line) if request
+        serve_peer(socket, peer: peer)
       ensure
-        line.close
+        leave(peer.uid)
       end
     rescue error
       # Only a failure in the handler itself reaches here; keep the daemon
@@ -88,12 +108,60 @@ module Tunnelgeist
       end
     end
 
-    # The peer of *socket* with its admission when at least one client
-    # configuration applies to it (UA8, CA2). Otherwise replies the refusal,
-    # logs why and returns nil. An admission that cannot be made is a
-    # refusal.
-    private def permitted_peer(socket : UNIXSocket) : Admitted?
-      peer = Peer.of(socket)
+    # Admits *peer*, reads its request and serves it.
+    private def serve_peer(socket : UNIXSocket, *, peer : Peer) : Nil
+      admitted = permitted_peer(socket, peer: peer)
+      return unless admitted
+
+      line = read_line(socket, peer: peer)
+      return unless line
+
+      begin
+        request = parse_request(socket, peer: peer, line: line)
+        serve(socket, admitted: admitted, request: request, line: line) if request
+      ensure
+        line.close
+      end
+    end
+
+    # Counts a connection of *uid*; false, counting nothing, when *uid* has
+    # `max_connections_per_user` connections being served already.
+    private def enter(uid : UInt32) : Bool
+      @connections_lock.synchronize do
+        count = @connections.fetch(uid, 0)
+        admitted = count < @max_connections_per_user
+        @connections[uid] = count + 1 if admitted
+        admitted
+      end
+    end
+
+    # Counts a connection of *uid* less, forgetting a uid left with none so
+    # the map does not grow with every uid that ever connected.
+    private def leave(uid : UInt32) : Nil
+      @connections_lock.synchronize do
+        left = @connections.fetch(uid, 0) - 1
+        if left > 0
+          @connections[uid] = left
+        else
+          @connections.delete(uid)
+        end
+      end
+    end
+
+    # The peer of *socket* as its audit token names it. When the kernel
+    # cannot say, replies the refusal, logs why and returns nil.
+    private def peer_of(socket : UNIXSocket) : Peer?
+      Peer.of(socket)
+    rescue error
+      @log.warn { "refused peer unreadable: #{error.message}" }
+      reply(socket, peer: nil, reply: Protocol::Reply.new(ok: false, error: @refusal))
+      nil
+    end
+
+    # *peer* with its admission when at least one client configuration
+    # applies to it (UA8, CA2). Otherwise replies the refusal, logs why and
+    # returns nil. An admission that cannot be made is a refusal.
+    private def permitted_peer(socket : UNIXSocket, *, peer : Peer) : Admitted?
       admission = begin
         @admit.call(peer)
       rescue error
@@ -106,10 +174,6 @@ module Tunnelgeist
       else
         Admitted.new(peer: peer, admission: admission)
       end
-    rescue error
-      @log.warn { "refused peer unreadable: #{error.message}" }
-      reply(socket, peer: nil, reply: Protocol::Reply.new(ok: false, error: @refusal))
-      nil
     end
 
     # Logs the refusal of *peer* with the failed *check* and replies it.
@@ -179,8 +243,11 @@ module Tunnelgeist
 
     # Creates and configures the device of *request* and passes its
     # descriptor to the client (UP2). An address or route *admission* does
-    # not allow is denied before the device exists (CA3). The handler's copy
-    # of the descriptor is closed on every path.
+    # not allow is denied before the device exists (CA3), and so is a device
+    # over the limits of the registry, whose slot is reserved for the peer's
+    # user before the device exists and released again when the create
+    # fails (RF3). The handler's copy of the descriptor is closed on every
+    # path.
     private def create(socket : UNIXSocket, *, peer : Peer, admission : Authorizer::Admission,
                        request : Protocol::Create) : Nil
       denial = admission.allow(addresses: request.addresses, routes: request.routes)
@@ -189,11 +256,29 @@ module Tunnelgeist
         return
       end
 
+      reservation = @registry.reserve(peer.uid)
+      if reservation.is_a?(Registry::Rejection)
+        fail(socket, peer: peer, operation: request.operation, name: request.name, message: reservation.message)
+        return
+      end
+
+      begin
+        create_reserved(socket, peer: peer, request: request, reservation: reservation)
+      ensure
+        @registry.release(reservation)
+      end
+    end
+
+    # Creates the device of *request* in the slot of *reservation*, as
+    # `create` says. A failed reply removes the registered device again,
+    # which frees its slot.
+    private def create_reserved(socket : UNIXSocket, *, peer : Peer, request : Protocol::Create,
+                                reservation : Registry::Reservation) : Nil
       device = @create_device.call(request.name, request.mtu)
       fd = device.fd
       name = device.name
       begin
-        configure(peer: peer, name: name, request: request)
+        configure(peer: peer, name: name, request: request, reservation: reservation)
       rescue error
         LibC.close(fd)
         # Logged here, where the name the kernel chose is known.
@@ -215,10 +300,12 @@ module Tunnelgeist
     end
 
     # Runs the commands for a new device *name*, drains the departure
-    # events and registers it. An entry still registered for *name* is
-    # stale, since the kernel only hands out a free unit: it replaces it and
-    # logs that at warn, with both interface indexes (UA6).
-    private def configure(*, peer : Peer, name : InterfaceName, request : Protocol::Create) : Nil
+    # events and registers it in the slot of *reservation*. An entry still
+    # registered for *name* is stale, since the kernel only hands out a free
+    # unit: it replaces it and logs that at warn, with both interface
+    # indexes (UA6).
+    private def configure(*, peer : Peer, name : InterfaceName, request : Protocol::Create,
+                          reservation : Registry::Reservation) : Nil
       run!(Commands.up(name))
       request.addresses.each { |address| run!(Commands.add_address(address, name: name)) }
       request.routes.each { |route| run!(Commands.add_route(route, name: name)) }
@@ -230,7 +317,8 @@ module Tunnelgeist
       # detached, so the events about that one are buffered by now
       # (unverified, see `DepartureWatcher`).
       @drain_departures.call
-      @registry.register(name, index: index, addresses: request.addresses, routes: request.routes) do |stale|
+      @registry.register(name, reservation: reservation, index: index, addresses: request.addresses,
+        routes: request.routes) do |stale|
         @log.warn { "#{describe_peer(peer)} op=create name=#{name} replaced stale entry: interface index #{stale.index} now #{index}" }
       end
     end

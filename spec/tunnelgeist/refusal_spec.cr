@@ -17,6 +17,7 @@ describe TunnelgeistRefusal do
         Reason::Users                  => "users",
         Reason::Groups                 => "groups",
         Reason::Config                 => "config",
+        Reason::Connections            => "connections",
       }
 
       names.each do |reason, name|

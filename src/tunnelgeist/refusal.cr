@@ -40,6 +40,8 @@ module Tunnelgeist
         io << "groups"
       in .config?
         io << "config"
+      in .connections?
+        io << "connections"
       end
     end
   end

@@ -26,6 +26,8 @@ module Tunnelgeist
       # Matched by no client configuration; the log names each
       # configuration's own reason.
       Config
+      # Has as many connections open as the daemon serves for one user.
+      Connections
     end
   end
 end

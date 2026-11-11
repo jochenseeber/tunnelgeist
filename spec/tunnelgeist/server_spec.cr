@@ -2,6 +2,7 @@ require "../spec_helper"
 require "../../src/tunnelgeist/server"
 require "./support/client_configs"
 require "./support/temporary_directory"
+require "./support/registrations"
 
 # The accept loop of the daemon and its idle exit (UA5).
 describe TunnelgeistServer do
@@ -36,7 +37,7 @@ describe TunnelgeistServer do
       backend : Log::MemoryBackend
 
     # Runs the block with a `ServerFixture`; its backend holds the server's log.
-    def with_server(failures : Int32 = 0, &)
+    def with_server(*, failures : Int32 = 0, max_connections : Int32 = Tunnelgeist::Server::MAX_CONNECTIONS, &)
       TunnelgeistTemporaryDirectory.with_temporary_directory do |directory|
         path = TunnelgeistTemporaryDirectory.socket_path(directory, name: "server")
         registry = Tunnelgeist::Registry.new
@@ -52,7 +53,7 @@ describe TunnelgeistServer do
         listener.failures = failures
         backend = Log::MemoryBackend.new
         server = Tunnelgeist::Server.new(listener, handler: handler, registry: registry, idle: 100.milliseconds,
-          log: Log.new("tunnelgeist.server", backend, :debug))
+          max_connections: max_connections, log: Log.new("tunnelgeist.server", backend, :debug))
         begin
           yield ServerFixture.new(server: server, path: path, registry: registry, backend: backend)
         ensure
@@ -91,7 +92,7 @@ describe TunnelgeistServer do
 
     test "run keeps running while a device is registered and returns once it is removed" do
       with_server do |fixture|
-        fixture.registry.register(UTUN7, index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
+        TunnelgeistRegistrations.register(fixture.registry, UTUN7, index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
         done = start(fixture.server)
         running = !returned?(done, within: 500.milliseconds)
         assert(running)
@@ -121,7 +122,7 @@ describe TunnelgeistServer do
 
     test "run keeps serving through failed accepts and serves the next connection" do
       with_server(failures: 2) do |fixture|
-        fixture.registry.register(UTUN7, index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
+        TunnelgeistRegistrations.register(fixture.registry, UTUN7, index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
         done = start(fixture.server)
         client = UNIXSocket.new(fixture.path)
         begin
@@ -139,6 +140,65 @@ describe TunnelgeistServer do
         fixture.registry.remove(UTUN7)
         finished = returned?(done, within: 500.milliseconds)
         assert(finished)
+      end
+    end
+
+    # Sends a request that does not parse on *client* and reads the reply in
+    # a fiber; the channel receives the reply line.
+    def ask(client : UNIXSocket) : Channel(String)
+      reply = Channel(String).new(1)
+      client.print("not json\n")
+      spawn { reply.send(client.gets.to_s) }
+      reply
+    end
+
+    def received?(reply : Channel(String), *, within : Time::Span) : Bool
+      select
+      when reply.receive
+        true
+      when timeout(within)
+        false
+      end
+    end
+
+    test "run waits at the connection limit and accepts again once a connection ends" do
+      with_server(max_connections: 1) do |fixture|
+        assert(Tunnelgeist::Server::MAX_CONNECTIONS == 64)
+        done = start(fixture.server)
+        idle = UNIXSocket.new(fixture.path)
+        waiting = UNIXSocket.new(fixture.path)
+        begin
+          reply = ask(waiting)
+          waited = !received?(reply, within: 300.milliseconds)
+          idle.close
+          answered = received?(reply, within: 2.seconds)
+
+          assert(waited)
+          assert(answered)
+          assert(fixture.backend.entries.any?(&.message.==("connection limit of 1 reached, waiting for a connection to end")))
+        ensure
+          idle.close
+          waiting.close
+        end
+        finished = returned?(done, within: 500.milliseconds)
+        assert(finished)
+      end
+    end
+
+    test "new refuses a connection limit below 1" do
+      TunnelgeistTemporaryDirectory.with_temporary_directory do |directory|
+        listener = UNIXServer.new(TunnelgeistTemporaryDirectory.socket_path(directory, name: "server"))
+        begin
+          registry = Tunnelgeist::Registry.new
+          handler = Tunnelgeist::Handler.new(registry, admit: ->(_peer : Tunnelgeist::Peer) { TunnelgeistClientConfigs.open_admission },
+            group: "tunnelgeist", log: Log.new("tunnelgeist", Log::MemoryBackend.new, :debug))
+          error = raised(ArgumentError) do
+            Tunnelgeist::Server.new(listener, handler: handler, registry: registry, max_connections: 0)
+          end
+          assert(error.message == "max_connections must be at least 1, not 0")
+        ensure
+          listener.close
+        end
       end
     end
   {% end %}

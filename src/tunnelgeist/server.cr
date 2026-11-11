@@ -15,7 +15,15 @@ module Tunnelgeist
   # The open connection count and the idle clock change only in fibers of
   # the server's execution context; the count is atomic so a handler fiber
   # on another thread could not lose an update either.
+  #
+  # At most *max_connections* connections are served at once (RF3): with
+  # that many open, the loop waits for one to end before it accepts the
+  # next, which waits in the listen queue meanwhile. The handler bounds the
+  # connections of each user within that.
   class Server
+    # The most connections the server serves at once.
+    MAX_CONNECTIONS = 64
+
     @open_connections = Atomic(Int32).new(0)
     # Set on each accept, so a connection that opens and closes between two
     # idle checks still restarts the idle clock.
@@ -30,10 +38,17 @@ module Tunnelgeist
 
     # A server that accepts on *listener*, hands each connection to *handler*
     # and returns from `run` once *registry* is empty and nothing happened for
-    # *idle*.
+    # *idle*. The daemon keeps the default *max_connections*; raises
+    # `ArgumentError` when it is below 1.
     def initialize(@listener : UNIXServer, *, @handler : Handler, @registry : Registry,
-                   @idle : Time::Span = 30.seconds, @log : Log = Log.for("tunnelgeist.server"))
+                   @idle : Time::Span = 30.seconds, @max_connections : Int32 = MAX_CONNECTIONS,
+                   @log : Log = Log.for("tunnelgeist.server"))
+      raise ArgumentError.new("max_connections must be at least 1, not #{@max_connections}") if @max_connections < 1
+
       @idle_since = Time.instant
+      # Holds one element per connection being served; a send waits while
+      # it is full.
+      @slots = Channel(Nil).new(@max_connections)
     end
 
     # Serves connections until the server is idle, then closes the
@@ -43,8 +58,12 @@ module Tunnelgeist
       @idle_since = Time.instant
       spawn(name: "tunnelgeist.idle") { watch_idle }
       loop do
+        take_slot
         socket = accept
-        break unless socket
+        unless socket
+          @slots.receive
+          break
+        end
 
         @open_connections.add(1)
         @accepted.set(true)
@@ -71,10 +90,23 @@ module Tunnelgeist
       end
     end
 
+    # Takes a connection slot, waiting while `max_connections` connections
+    # are being served. The wait is logged, so the operator sees why
+    # clients hang.
+    private def take_slot : Nil
+      select
+      when @slots.send(nil)
+      else
+        @log.warn { "connection limit of #{@max_connections} reached, waiting for a connection to end" }
+        @slots.send(nil)
+      end
+    end
+
     private def serve(socket : UNIXSocket) : Nil
       @handler.handle(socket)
     ensure
       @open_connections.sub(1)
+      @slots.receive
     end
 
     # Checks the idle rule a few times per idle period and closes the

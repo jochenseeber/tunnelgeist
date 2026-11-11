@@ -3,6 +3,7 @@ require "socket"
 require "../../src/tunnelgeist/fd_passing"
 require "../../src/tunnelgeist/handler"
 require "../../spec/tunnelgeist/support/client_configs"
+require "../../spec/tunnelgeist/support/registrations"
 
 # The request handler with the kernel's own lookup of a descriptor's
 # interface name, `Device.name_of`; the other collaborators are fakes.
@@ -14,7 +15,7 @@ describe TunnelgeistHandler do
 
     test "a change that carries the end of a Unix socket pair is refused as no utun device and runs nothing" do
       registry = Tunnelgeist::Registry.new
-      registry.register(UTUN9, index: 21_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(registry, UTUN9, index: 21_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
       commands = [] of Array(String)
       handler = Tunnelgeist::Handler.new(registry,
         create_device: ->(_name : Tunnelgeist::InterfaceName?, _mtu : Int32) : Tunnelgeist::Device::Utun { raise "no device in this test" },

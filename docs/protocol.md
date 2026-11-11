@@ -206,6 +206,30 @@ A failed `ifconfig` or `route` turns into an error reply that carries the
 program, its exit status and its standard error. A client error never stops the
 daemon.
 
+## Limits
+
+The daemon bounds the connections it serves and the devices it keeps, in total
+and per user, the peer's effective user ID:
+
+| Limit                    | Value | Over the limit                                                    |
+| ------------------------ | ----- | ----------------------------------------------------------------- |
+| Connections being served | 64    | the next connection waits in the socket's queue until one ends    |
+| Connections of one user  | 8     | `too many connections for uid U`, before the authorization checks |
+| Devices                  | 128   | `create` fails with `device limit of 128 reached`                 |
+| Devices of one user      | 16    | `create` fails with `device limit of 16 reached for uid U`        |
+
+A device counts against the user whose `create` made it from the moment the
+`create` is checked until the daemon forgets the device: when its interface
+goes away, or when its `create` fails or its reply cannot be sent. A refused
+`create` opens no device.
+
+<!-- dprint-ignore -->
+```json
+{"ok":false,"error":"too many connections for uid 501"}
+{"ok":false,"error":"device limit of 128 reached"}
+{"ok":false,"error":"device limit of 16 reached for uid 501"}
+```
+
 ## Unknown devices
 
 A change whose descriptor passes the checks above but names a device the daemon

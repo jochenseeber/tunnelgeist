@@ -3,6 +3,7 @@ require "../../src/tunnelgeist/handler"
 require "./support/client_configs"
 require "./support/descriptor_sender"
 require "./support/prompt_calls"
+require "./support/registrations"
 
 # The request handler of the root helper (UA5, UP1 to UP7), with every
 # collaborator replaced: the device creator, the command runner, the
@@ -67,7 +68,7 @@ describe TunnelgeistHandler do
 
     # A handler on fakes that record what it asked of them.
     class HandlerFixture
-      getter registry = Tunnelgeist::Registry.new
+      getter registry : Tunnelgeist::Registry
       getter commands = [] of Array(String)
       getter backend = Log::MemoryBackend.new
       # The descriptors the fake device creator handed out.
@@ -101,7 +102,13 @@ describe TunnelgeistHandler do
       # destination the kernel has no route to.
       property route_get : String? = "   route to: 10.99.0.0\ndestination: 10.99.0.0\n       mask: 255.255.0.0\n  interface: utun9\n"
 
-      def handler(request_timeout : Time::Span = Protocol::REQUEST_TIMEOUT) : Tunnelgeist::Handler
+      # A fixture whose handler uses *registry*, by default one with the
+      # default limits.
+      def initialize(@registry : Tunnelgeist::Registry = Tunnelgeist::Registry.new)
+      end
+
+      def handler(request_timeout : Time::Span = Protocol::REQUEST_TIMEOUT,
+                  max_connections_per_user : Int32 = Tunnelgeist::Handler::MAX_CONNECTIONS_PER_USER) : Tunnelgeist::Handler
         Tunnelgeist::Handler.new(registry,
           create_device: ->(name : Tunnelgeist::InterfaceName?, mtu : Int32) { create_device(name, mtu: mtu) },
           run: ->(argv : Array(String)) { run(argv) },
@@ -111,6 +118,7 @@ describe TunnelgeistHandler do
           request_timeout: request_timeout,
           drain_departures: -> { record_drain },
           descriptor_name: ->(fd : Int32) { descriptor_name(fd) },
+          max_connections_per_user: max_connections_per_user,
           log: Log.new("tunnelgeist", backend, :debug))
       end
 
@@ -286,7 +294,7 @@ describe TunnelgeistHandler do
     end
 
     def register(fixture : HandlerFixture) : Nil
-      fixture.registry.register(UTUN9, index: 21_u32, addresses: [v4(2)], routes: [route("10.99.0.0/16")]) { }
+      TunnelgeistRegistrations.register(fixture.registry, UTUN9, index: 21_u32, addresses: [v4(2)], routes: [route("10.99.0.0/16")]) { }
     end
 
     test "create builds the device, configures it in order, registers it and passes the descriptor" do
@@ -508,7 +516,7 @@ describe TunnelgeistHandler do
 
     test "remove_route of an IPv6 route asks route get with -inet6" do
       fixture = HandlerFixture.new
-      fixture.registry.register(UTUN9, index: 21_u32, addresses: [v4(2)], routes: [route("fd99::/48")]) { }
+      TunnelgeistRegistrations.register(fixture.registry, UTUN9, index: 21_u32, addresses: [v4(2)], routes: [route("fd99::/48")]) { }
 
       reply = change(fixture, Protocol::RemoveRoute.new(name: UTUN9, route: route("fd99::/48")))
 
@@ -667,7 +675,7 @@ describe TunnelgeistHandler do
     test "a change with the descriptor of another device is refused, names both and runs nothing" do
       fixture = HandlerFixture.new
       register(fixture)
-      fixture.registry.register(UTUN8, index: 20_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(fixture.registry, UTUN8, index: 20_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
 
       reply = change(fixture, Protocol::RemoveAddress.new(name: UTUN9, address: v4(2)), device: UTUN8)
 
@@ -723,7 +731,7 @@ describe TunnelgeistHandler do
     # command runs, with the channel that receives the reply.
     def start_held_change(fixture : HandlerFixture, *, gate : Channel(Nil)) : Channel(Protocol::Reply | Exception)
       register(fixture)
-      fixture.registry.register(UTUN8, index: 22_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(fixture.registry, UTUN8, index: 22_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
       fixture.indexes[UTUN8] = 22_u32
       started = Channel(Array(String)).new(4)
       hold_utun9_commands(fixture, gate: gate, started: started)
@@ -795,7 +803,7 @@ describe TunnelgeistHandler do
       gate = Channel(Nil).new
       held = start_held_change(fixture, gate: gate)
 
-      promptly { fixture.registry.register(UTUN9, index: 24_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { } }
+      promptly { TunnelgeistRegistrations.register(fixture.registry, UTUN9, index: 24_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { } }
       gate.send(nil)
       reply = awaited(held)
 
@@ -1250,6 +1258,197 @@ describe TunnelgeistHandler do
       assert(!reply.ok)
       assert(reply.error == "request is not valid UTF-8")
       assert(fixture.create_calls.empty?)
+    end
+
+    # The admission limits (RF3).
+
+    # The effective uid of this process, which the handler reads as the
+    # peer of every connection here.
+    def own_uid : UInt32
+      left, right = UNIXSocket.pair
+      begin
+        Tunnelgeist::Peer.of(left).uid
+      ensure
+        left.close
+        right.close
+      end
+    end
+
+    def empty_create : Protocol::Create
+      Protocol::Create.new(name: nil, mtu: 1_280, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix)
+    end
+
+    # A fixture whose registry keeps one device per user and four in total.
+    def limited_fixture : HandlerFixture
+      HandlerFixture.new(Tunnelgeist::Registry.new(max_devices: 4, max_devices_per_user: 1))
+    end
+
+    # Whether the registry of *fixture* has a device slot free for this
+    # process's user; a slot it reserves is released again.
+    def slot_free?(fixture : HandlerFixture) : Bool
+      reservation = fixture.registry.reserve(own_uid)
+      return false if reservation.is_a?(Tunnelgeist::Registry::Rejection)
+
+      fixture.registry.release(reservation)
+      true
+    end
+
+    # Starts *count* connections that *handler* serves in fibers and that
+    # send nothing, and returns once *fixture* admitted their peers; each
+    # channel receives once its connection is served.
+    def open_idle_connections(fixture : HandlerFixture, *, handler : Tunnelgeist::Handler, clients : Array(UNIXSocket),
+                              count : Int32) : Array(Channel(Nil | Exception))
+      admitted = fixture.peers.size
+      served = Array.new(count) do
+        client, server = UNIXSocket.pair
+        clients << client
+        later { handler.handle(server) }
+      end
+      promptly do
+        until fixture.peers.size == admitted + count
+          sleep 1.millisecond
+        end
+      end
+      served
+    end
+
+    test "the ninth connection of one user is refused before its admission is checked" do
+      fixture = HandlerFixture.new
+      handler = fixture.handler
+      clients = [] of UNIXSocket
+      begin
+        served = open_idle_connections(fixture, handler: handler, clients: clients, count: 8)
+
+        refused = exchange(fixture, request: nil, handler: handler).reply
+
+        assert(Tunnelgeist::Handler::MAX_CONNECTIONS_PER_USER == 8)
+        assert(refused == Protocol::Reply.new(ok: false, error: "too many connections for uid #{own_uid}"))
+        assert(fixture.peers.size == 8)
+        assert(fixture.logged?("uid=#{own_uid} pid=#{Process.pid} refused check=connections"))
+      ensure
+        clients.each(&.close)
+      end
+      served.try &.each { |done| awaited(done) }
+    end
+
+    test "a connection that ends frees its place for the next connection of the user" do
+      fixture = HandlerFixture.new
+      handler = fixture.handler(max_connections_per_user: 1)
+      clients = [] of UNIXSocket
+      begin
+        served = open_idle_connections(fixture, handler: handler, clients: clients, count: 1)
+        refused = exchange(fixture, request: nil, handler: handler).reply
+        clients[0].close
+        awaited(served[0])
+
+        admitted = exchange(fixture, request: "not json\n", handler: handler).reply
+
+        assert(refused.error == "too many connections for uid #{own_uid}")
+        assert(!admitted.ok)
+        assert(admitted.error.to_s.starts_with?("malformed JSON"))
+        assert(fixture.peers.size == 2)
+      ensure
+        clients.each(&.close)
+      end
+    end
+
+    test "a create over the user's device limit is refused before the device exists" do
+      fixture = limited_fixture
+      first = exchange(fixture, request: line(empty_create))
+      first.fd.try { |descriptor| LibC.close(descriptor) }
+
+      second = exchange(fixture, request: line(empty_create)).reply
+
+      assert(first.reply.ok)
+      assert(second == Protocol::Reply.new(ok: false, error: "device limit of 1 reached for uid #{own_uid}"))
+      assert(fixture.create_calls.size == 1)
+      assert(fixture.commands.size == 1)
+      assert(fixture.logged?("op=create name=- failed: device limit of 1 reached for uid #{own_uid}"))
+    end
+
+    test "a create over the total device limit is refused before the device exists" do
+      fixture = HandlerFixture.new(Tunnelgeist::Registry.new(max_devices: 1, max_devices_per_user: 1))
+      TunnelgeistRegistrations.register(fixture.registry, UTUN8, index: 20_u32, owner: own_uid + 1)
+
+      reply = exchange(fixture, request: line(empty_create)).reply
+
+      assert(reply == Protocol::Reply.new(ok: false, error: "device limit of 1 reached"))
+      assert(fixture.create_calls.empty?)
+    end
+
+    test "of two creates at the device limit whose commands run at the same time, only the first gets a device" do
+      fixture = limited_fixture
+      gate = Channel(Nil).new
+      started = Channel(Array(String)).new(4)
+      hold_utun9_commands(fixture, gate: gate, started: started)
+      first = later { exchange(fixture, request: line(empty_create)) }
+      assert(promptly { started.receive } == Commands.up(UTUN9))
+
+      second = promptly { exchange(fixture, request: line(empty_create)).reply }
+      gate.send(nil)
+      created = awaited(first)
+      created.fd.try { |descriptor| LibC.close(descriptor) }
+
+      assert(second.error == "device limit of 1 reached for uid #{own_uid}")
+      assert(created.reply.ok)
+      assert(fixture.create_calls.size == 1)
+      assert(!slot_free?(fixture))
+    end
+
+    test "a create whose command fails frees its device slot" do
+      fixture = limited_fixture
+      fixture.failing = "/sbin/ifconfig"
+
+      reply = exchange(fixture, request: line(empty_create)).reply
+
+      assert(!reply.ok)
+      assert(slot_free?(fixture))
+    end
+
+    test "a create whose interface has no index frees its device slot" do
+      fixture = limited_fixture
+      fixture.indexes.clear
+
+      reply = exchange(fixture, request: line(empty_create)).reply
+
+      assert(!reply.ok)
+      assert(slot_free?(fixture))
+    end
+
+    test "a create whose device creator fails frees its device slot" do
+      fixture = limited_fixture
+      fixture.create_error = IO::Error.from_os_error("Cannot connect to utun9", Errno::EBUSY)
+
+      reply = exchange(fixture, request: line(empty_create)).reply
+
+      assert(!reply.ok)
+      assert(slot_free?(fixture))
+    end
+
+    test "a create whose reply cannot be sent frees its device slot" do
+      fixture = limited_fixture
+      client, server = UNIXSocket.pair
+      client.write(line(empty_create).to_slice)
+      fixture.on_create = -> { client.close }
+
+      fixture.handler.handle(server)
+
+      assert(fixture.registry.empty?)
+      assert(fixture.logged?("reply not sent"))
+      assert(slot_free?(fixture))
+    end
+
+    test "a change that finds the interface index changed frees the device slot of the entry it removes" do
+      fixture = limited_fixture
+      TunnelgeistRegistrations.register(fixture.registry, UTUN9, index: 21_u32, owner: own_uid)
+      fixture.indexes[UTUN9] = 22_u32
+      before = slot_free?(fixture)
+
+      reply = change(fixture, Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16")))
+
+      assert(!before)
+      assert(reply.error == Protocol::UNKNOWN_DEVICE)
+      assert(slot_free?(fixture))
     end
   {% end %}
 end

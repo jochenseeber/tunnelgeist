@@ -23,6 +23,9 @@ module Tunnelgeist
       getter name : InterfaceName
       # The kernel's interface index.
       getter index : UInt32
+      # The effective uid of the client that created the device, whose
+      # device slot the entry holds.
+      getter owner : UInt32
 
       # Held for a whole change: check, command and record.
       @lock = Mutex.new
@@ -31,7 +34,7 @@ module Tunnelgeist
       # Copies *addresses* and *routes*. Raises `ArgumentError` when two of
       # *addresses* have one local address: the kernel keeps one alias per
       # local address, so the entry could not tell them apart.
-      def initialize(*, @name : InterfaceName, @index : UInt32, addresses : Array(Address), routes : Array(Prefix))
+      def initialize(*, @name : InterfaceName, @index : UInt32, @owner : UInt32, addresses : Array(Address), routes : Array(Prefix))
         addresses.each_with_index do |address, index|
           if addresses.first(index).any?(&.same_local?(address))
             raise ArgumentError.new("address #{address.address.address} listed twice")
