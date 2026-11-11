@@ -70,11 +70,13 @@ the daemon created. Each request line is sent in one `sendmsg` that carries the
 device's open descriptor as `SCM_RIGHTS` ancillary data, exactly one, the way
 the `create` reply carries it to the client. The client keeps its own copy.
 
-The daemon takes the interface name of the descriptor from the kernel
-(`getsockopt` with `SYSPROTO_CONTROL` and `UTUN_OPT_IFNAME`) and refuses the
-request before it looks up the device when the request carries no descriptor,
-more than one, one that is not a utun device, or the descriptor of another
-device than the request's `name`:
+The daemon tells the device of the descriptor by the socket's peer address
+(`getpeername`): a utun descriptor is a kernel control socket whose
+`sockaddr_ctl` has the `sc_id` of the control `com.apple.net.utun_control` (as
+`CTLIOCGINFO` gives it), and its unit `sc_unit` names `utun<sc_unit - 1>`. The
+daemon refuses the request before it looks up the device when the request
+carries no descriptor, more than one, one that is not a utun device, or the
+descriptor of another device than the request's `name`:
 
 <!-- dprint-ignore -->
 ```json

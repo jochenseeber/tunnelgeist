@@ -52,16 +52,16 @@ The tests are written with microtest and come in three sets:
 - The integration tests in `test/tunnelgeist/`, run by `rake test`, are the
   tests that need the system: the directory service (`staff`, `wheel`,
   `nogroup`), Security on the test binary, `plutil`, `git`, the programs
-  `CommandRunner` runs, the kernel event socket, the kernel's answer to
-  `UTUN_OPT_IFNAME` for a descriptor that is no utun device, the default
-  configuration path, the root-ness of the process, and `install` as root,
-  which checks every directory above the ones it writes in up to `/` and so
-  needs a `$TMPDIR` whose ancestors only root or you own and no one else may
-  write. macOS's own per-user `$TMPDIR` below `/private/var/folders` is one; a
-  `TMPDIR` below `/private/tmp`, which everyone may write, is not. They mirror
-  the layout of `spec/`; `test/test_helper.cr` sets up microtest and
-  `test/tunnelgeist/support/` holds their helpers. They run as you and change
-  nothing on the system.
+  `CommandRunner` runs, the kernel event socket, the peer address of a
+  descriptor that is no utun device, a kernel control socket of another control
+  included, the default configuration path, the root-ness of the process, and
+  `install` as root, which checks every directory above the ones it writes in
+  up to `/` and so needs a `$TMPDIR` whose ancestors only root or you own and
+  no one else may write. macOS's own per-user `$TMPDIR` below
+  `/private/var/folders` is one; a `TMPDIR` below `/private/tmp`, which
+  everyone may write, is not. They mirror the layout of `spec/`;
+  `test/test_helper.cr` sets up microtest and `test/tunnelgeist/support/` holds
+  their helpers. They run as you and change nothing on the system.
 - The daemon tests in `test/daemon/`, run by `rake test:daemon` and by nothing
   else. A `Tunnelgeist::Client` asks a real daemon for utun devices, and the
   tests read the ICMP echo request of `ping -c1 -t2 10.77.3.2` from

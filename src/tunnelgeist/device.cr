@@ -5,10 +5,15 @@ require "./device/utun"
 require "./interface_name"
 
 module Tunnelgeist
-  # Opens the kernel side of a utun device. The daemon that hands the
-  # descriptor to another process calls it.
+  # Opens the kernel side of a utun device, and tells which utun device a
+  # descriptor belongs to. The daemon that hands the descriptor to another
+  # process calls it.
   module Device
     extend self
+
+    # The id of the utun kernel control on this boot, looked up on first
+    # use by `name_of`.
+    @@utun_control_id : UInt32? = nil
 
     # The MTU of a new device unless told otherwise, and the least the
     # protocol accepts: the minimum MTU of IPv6.
@@ -36,7 +41,7 @@ module Tunnelgeist
       begin
         mark_close_on_exec(fd)
         connect(fd, unit: unit)
-        assigned = name_of(fd)
+        assigned = interface_name(fd)
         set_mtu(assigned, mtu: mtu)
       rescue ex
         LibC.close(fd)
@@ -54,9 +59,66 @@ module Tunnelgeist
       end
     end
 
-    # Looks up the id of the utun control with CTLIOCGINFO and connects
-    # *fd* to it at *unit*, which creates the interface.
+    # Looks up the id of the utun control and connects *fd* to it at
+    # *unit*, which creates the interface.
     private def connect(fd : Int32, *, unit : UInt32) : Nil
+      address = LibUtun::SockaddrCtl.new
+      address.sc_len = sizeof(LibUtun::SockaddrCtl).to_u8
+      address.sc_family = LibUtun::AF_SYSTEM.to_u8
+      address.ss_sysaddr = LibUtun::AF_SYS_CONTROL.to_u16
+      address.sc_id = control_id(fd)
+      address.sc_unit = unit
+      if LibC.connect(fd, pointerof(address).as(LibC::Sockaddr*), sizeof(LibUtun::SockaddrCtl)) < 0
+        target = unit == 0 ? "a new utun" : "utun#{unit - 1}"
+        raise IO::Error.from_errno("Cannot connect to #{LibUtun::UTUN_CONTROL_NAME} for #{target} (root required)")
+      end
+    end
+
+    # The name of the utun device whose control socket is *fd*, from the
+    # socket's peer address. The address must be the kernel control address
+    # (`sockaddr_ctl`) of the utun control, by its id, which `CTLIOCGINFO`
+    # gives without privileges; its unit N + 1 names `utunN`. The kernel
+    # sets that address when the socket connects, so no other socket, a
+    # kernel control of another kind included, passes. The daemon checks
+    # with it which device a descriptor a client sent belongs to.
+    #
+    # Raises `IO::Error` when *fd* is no connected utun control socket: with
+    # the system's message when `getpeername` fails (a pipe, an unconnected
+    # socket), and saying why the address is not a utun's otherwise.
+    def name_of(fd : Int32) : InterfaceName
+      address = LibUtun::SockaddrCtl.new
+      size = LibC::SocklenT.new(sizeof(LibUtun::SockaddrCtl))
+      if LibC.getpeername(fd, pointerof(address).as(LibC::Sockaddr*), pointerof(size)) < 0
+        raise IO::Error.from_errno("getpeername")
+      end
+      unless size >= sizeof(LibUtun::SockaddrCtl) && address.sc_family == LibUtun::AF_SYSTEM && address.ss_sysaddr == LibUtun::AF_SYS_CONTROL
+        raise IO::Error.new("descriptor is not a kernel control socket")
+      end
+      unless address.sc_id == utun_control_id
+        raise IO::Error.new("kernel control #{address.sc_id} is not #{LibUtun::UTUN_CONTROL_NAME}")
+      end
+      raise IO::Error.new("#{LibUtun::UTUN_CONTROL_NAME} unit 0 names no utun") if address.sc_unit == 0
+
+      InterfaceName.new("utun#{address.sc_unit - 1}")
+    end
+
+    # The id of the utun control, looked up once on a socket of its own.
+    private def utun_control_id : UInt32
+      @@utun_control_id ||= begin
+        fd = LibC.socket(LibUtun::PF_SYSTEM, LibC::SOCK_DGRAM, LibUtun::SYSPROTO_CONTROL)
+        raise IO::Error.from_errno("Cannot open a #{LibUtun::UTUN_CONTROL_NAME} socket") if fd < 0
+
+        begin
+          control_id(fd)
+        ensure
+          LibC.close(fd)
+        end
+      end
+    end
+
+    # The id of the utun control, from `CTLIOCGINFO` on the kernel control
+    # socket *fd*.
+    private def control_id(fd : Int32) : UInt32
       info = LibUtun::CtlInfo.new
       name = StaticArray(UInt8, LibUtun::MAX_KCTL_NAME).new(0_u8)
       LibUtun::UTUN_CONTROL_NAME.to_slice.copy_to(name.to_slice)
@@ -65,27 +127,12 @@ module Tunnelgeist
         raise IO::Error.from_errno("CTLIOCGINFO #{LibUtun::UTUN_CONTROL_NAME}")
       end
 
-      address = LibUtun::SockaddrCtl.new
-      address.sc_len = sizeof(LibUtun::SockaddrCtl).to_u8
-      address.sc_family = LibUtun::AF_SYSTEM.to_u8
-      address.ss_sysaddr = LibUtun::AF_SYS_CONTROL.to_u16
-      address.sc_id = info.ctl_id
-      address.sc_unit = unit
-      if LibC.connect(fd, pointerof(address).as(LibC::Sockaddr*), sizeof(LibUtun::SockaddrCtl)) < 0
-        target = unit == 0 ? "a new utun" : "utun#{unit - 1}"
-        raise IO::Error.from_errno("Cannot connect to #{LibUtun::UTUN_CONTROL_NAME} for #{target} (root required)")
-      end
+      info.ctl_id
     end
 
-    # The name of the utun interface whose control socket is *fd*, read from
-    # the kernel with `UTUN_OPT_IFNAME`. Needs no privileges, so the daemon
-    # can check which device a descriptor a client sent belongs to. Raises
-    # `IO::Error` when *fd* is no connected utun control socket: with the
-    # system's message when the kernel refuses the option (a pipe, an
-    # unconnected control socket, an inet socket), and saying that the
-    # answer is not a utun name otherwise. A Unix socket answers the option
-    # number for `LOCAL_PEERPID`, with 4 bytes that are no name.
-    def name_of(fd : Int32) : InterfaceName
+    # Reads the name of the interface the connect of `create` made with
+    # `UTUN_OPT_IFNAME`.
+    private def interface_name(fd : Int32) : InterfaceName
       buffer = StaticArray(UInt8, LibUtun::IFNAMSIZ).new(0_u8)
       size = LibC::SocklenT.new(LibUtun::IFNAMSIZ)
       if LibC.getsockopt(fd, LibUtun::SYSPROTO_CONTROL, LibUtun::UTUN_OPT_IFNAME, buffer.to_unsafe.as(Void*), pointerof(size)) < 0

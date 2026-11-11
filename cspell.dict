@@ -53,6 +53,7 @@ geteuid
 getfd
 getfl
 getgrnam
+getpeername
 getpwnam
 getrlimit
 getsockname
@@ -83,6 +84,7 @@ microtest
 msghdr
 namelen
 nametoindex
+netsrc
 nilable
 nodoc
 nofd
@@ -100,7 +102,6 @@ osname
 ostype
 otool
 pcre
-peerpid
 peertoken
 pgrep
 pipefail
