@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "English"
+require "digest"
 require "fileutils"
 require "json"
 require "socket"
@@ -143,8 +144,11 @@ namespace "test" do
     # down. A home directory belongs to its user, so the file is written here
     # as the user and installed with sudo into a directory of its own in
     # root's home, named by its `/private` path: `/var` is a symbolic link,
-    # which the daemon refuses.
-    config_directory = "/private/var/root/tunnelgeist-daemon-test"
+    # which the daemon refuses. The name carries a digest of the checkout's
+    # real path, so the runs of two checkouts do not overwrite or remove
+    # each other's configuration.
+    checkout = Digest::SHA256.hexdigest(File.realpath(Dir.pwd))[0, 8]
+    config_directory = "/private/var/root/tunnelgeist-daemon-test-#{checkout}"
     config = File.join(config_directory, "config.json")
     config_made = false
     staged_config = File.join(".work", "root-config.json")
@@ -244,8 +248,11 @@ namespace "test" do
       # the directory counts as there once the task set out to make it.
       FileUtils.rm_f(staged_config)
       if config_made
-        system("sudo", "rm", "-f", config)
-        system("sudo", "rmdir", config_directory)
+        # A failed removal leaves a file root owns behind, so it is said.
+        warn "test:daemon could not remove #{config}; remove it with sudo" unless system("sudo", "rm", "-f", config)
+        unless system("sudo", "rmdir", config_directory)
+          warn "test:daemon could not remove #{config_directory}; remove it with sudo"
+        end
       end
     end
   end
