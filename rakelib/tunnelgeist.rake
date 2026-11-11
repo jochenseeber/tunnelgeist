@@ -5,6 +5,7 @@ require "digest"
 require "fileutils"
 require "json"
 require "socket"
+require "tmpdir"
 
 # Project-specific tasks of this shard that the rake template does not provide.
 
@@ -181,7 +182,18 @@ task "exercise" => "prepare" do
     sh "sudo", "install", "-o", "root", "-g", "wheel", "-m", "0644", staged_config, config
     FileUtils.rm_f(socket)
     daemon_pid = nil
-    pid = Process.spawn("sudo", File.expand_path(daemon), "serve", "--config", config)
+    # The daemon's standard output and error go to a file of their own, so
+    # its log does not mix with the tests' output; the file is kept for
+    # reading after the run.
+    started = Time.now.strftime("%Y%m%d-%H%M%S")
+    log = File.join(Dir.tmpdir, "tunnelgeist-exercise-#{checkout}-#{started}.log")
+    log_file = File.open(log, File::WRONLY | File::CREAT | File::EXCL, 0o600)
+    puts "tunnelgeist's output goes to #{log}"
+    pid = begin
+      Process.spawn("sudo", File.expand_path(daemon), "serve", "--config", config, %i[out err] => log_file)
+    ensure
+      log_file.close
+    end
     # The daemon's own pid, found by its command line, which names the unique
     # configuration path; nil while it is not running. sudo may run the
     # command under a monitor process (use_pty), so the child of `pid` can be
@@ -203,12 +215,12 @@ task "exercise" => "prepare" do
       deadline = Time.now + 10
       ready = false
       until ready
-        abort "tunnelgeist exited before it was ready" if exited.call
+        abort "tunnelgeist exited before it was ready; see #{log}" if exited.call
         begin
           UNIXSocket.new(socket).close
           ready = true
         rescue SystemCallError
-          abort "tunnelgeist did not accept connections on #{socket} within 10 s" if Time.now > deadline
+          abort "tunnelgeist did not accept connections on #{socket} within 10 s; see #{log}" if Time.now > deadline
           sleep 0.1
         end
       end
@@ -240,6 +252,7 @@ task "exercise" => "prepare" do
         sleep 0.1 until exited.call || Time.now > reap_deadline
         warn "tunnelgeist (pid #{target}) may still be running" unless exited.call
       end
+      puts "tunnelgeist's output is in #{log}"
     end
   ensure
     # Root owns the configuration, so sudo removes it, also when writing it
