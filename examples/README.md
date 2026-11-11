@@ -5,7 +5,8 @@
 `config/` is a complete daemon configuration. Copy it to
 `/usr/local/etc/tunnelgeist/` with `sudo`, owned by root and writable by no one
 else, and reload the daemon; [docs/configuration.md](../docs/configuration.md)
-describes every field.
+describes every field, and its [Ownership](../docs/configuration.md#ownership)
+section the checks of the files and of every directory above them.
 
 - `config/config.json` is the main file. It names the socket and the main group
   `tunnelgeist`, includes every `clients.d/*.json`, and holds one client

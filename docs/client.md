@@ -92,8 +92,9 @@ Every failure raises `Tunnelgeist::Client::Error`, an `IO::Error` whose
   an item the configuration does not allow, such as
   `address 10.99.0.1/24 not allowed` or `route 10.99.0.0/16 not allowed` (see
   [Refusals](configuration.md#refusals)), a descriptor the daemon does not take
-  for the device's (see [Changing a device](protocol.md#changing-a-device)), or
-  a failed command.
+  for the device's (see [Changing a device](protocol.md#changing-a-device)), a
+  limit, such as `device limit of 16 reached for uid 501` (see
+  [Limits](protocol.md#limits)), or a failed command.
 - `NoDevice`: the reply to `create` carried no device.
 
 ## Without the daemon
@@ -122,6 +123,8 @@ language can be written from that document alone.
 ## Limits
 
 - A device allows 16 addresses and 64 routes.
+- The daemon keeps at most 16 devices for one user and 128 in all, and serves
+  at most 8 connections of one user at once.
 - The daemon reads a request within 5 seconds, and a request is at most 64 KiB.
 - The client gives up after 10 seconds (`Client#timeout`).
 - The daemon exits after 30 idle seconds with no device open; launchd starts it

@@ -249,6 +249,18 @@ the daemon needs, and no library file requires any of these:
 So does `decimal`, the check of ASCII digits that `interface_name`, `prefix`,
 `membership` and `config/loader` share.
 
+The daemon's limits are constants next to what they bound:
+`Server::MAX_CONNECTIONS`, `Handler::MAX_CONNECTIONS_PER_USER`,
+`Registry::MAX_DEVICES` and `Registry::MAX_DEVICES_PER_USER`,
+`CommandRunner::COMMAND_TIMEOUT`, `COMMAND_OUTPUT_LIMIT` and
+`COMMAND_CONCURRENCY`, `TrustPolicy::MAX_FILE_SIZE`, and in
+`protocol/common.cr` `MAX_REQUEST`, `REQUEST_TIMEOUT`, `MAX_ADDRESSES` and
+`MAX_ROUTES`. The server, the handler and the registry take their limits, and
+`CommandRunner.run` its time and output limit, as arguments that default to
+these, so a spec reaches a limit with a few devices or a short time; the daemon
+passes none. `docs/protocol.md`, `docs/client.md` and `docs/configuration.md`
+state the values, so a changed limit changes them too.
+
 Nothing in `src/` uses a `Regex`: one regex links PCRE2 into the daemon, about
 490 KB of the static release binary, and the static profile does not link it.
 Check text with `Char` and `String` methods instead, and parse the command line

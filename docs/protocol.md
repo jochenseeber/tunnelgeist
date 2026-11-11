@@ -152,8 +152,16 @@ Reply:
 {"version":1,"op":"remove_address","name":"utun7","address":{"address":"fd77::2","prefix":64}}
 ```
 
-`remove_address` accepts only an address the daemon added for that device.
-Adding an address the device already has is an error.
+The kernel tells the addresses of a device apart by their local address, and so
+does the daemon: `add_address` is refused when the device already has the local
+address, also with another prefix length or peer. `remove_address` accepts only
+an address the daemon added for that device, with the same prefix length and
+peer.
+
+<!-- dprint-ignore -->
+```json
+{"ok":false,"error":"address 10.77.0.2 already on utun7"}
+```
 
 ### add_route and remove_route
 
@@ -199,12 +207,19 @@ request it rejects with an error reply.
   address has a `peer` of the same family; an IPv6 address has none.
 - A `create` has at most 16 addresses and 64 routes, and a device has at most
   that many in total, counting what it already has.
+- A `create` names each local address once; one listed twice is refused, as in
+  `address 10.77.0.2 listed twice`.
 - Every field has its type: a string where a string is expected, an integer
   where an integer is expected. Nothing but the fields listed is accepted.
 
 A failed `ifconfig` or `route` turns into an error reply that carries the
-program, its exit status and its standard error. A client error never stops the
-daemon.
+program, its exit status and its standard error, such as
+`/sbin/route exited 1: route: File exists`; of a longer standard error the
+first 4 KiB (4,096 bytes) are kept, followed by `… (truncated)`. A command
+still running after 10 seconds is stopped, and the reply names the program and
+the limit, as in `ifconfig timed out after 10 s`. The daemon runs at most 4
+commands at once; a further one waits until one of them ends. A client error
+never stops the daemon.
 
 ## Limits
 
