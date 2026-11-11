@@ -21,8 +21,9 @@ connection carries one request and one reply, then closes.
 - Every request carries `"version": 1` and an `"op"`. Unknown fields, in the
   request and in an address, are rejected by name.
 - A request that changes a device carries the device's descriptor; see
-  [Changing a device](#changing-a-device). The daemon closes any descriptor
-  that comes with another request.
+  [Changing a device](#changing-a-device). The daemon closes a descriptor that
+  comes with a `create`, and refuses any request whose line comes with more
+  than one descriptor, as soon as the second arrives.
 
 In the examples below, a line with an `"op"` is a request and any other line is
 a reply. Both are printed exactly as the library writes them.

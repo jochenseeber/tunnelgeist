@@ -3,6 +3,7 @@
 require "socket"
 require "./fd_passing/lib_socket"
 require "./fd_passing/received"
+require "./fd_passing/truncated_error"
 
 module Tunnelgeist
   # Sends and receives a file descriptor together with data over a Unix
@@ -77,9 +78,11 @@ module Tunnelgeist
     # stream), the descriptor that came with them, or nil, and the number of
     # descriptors that came, as a `Received`. The descriptor has
     # close-on-exec set; descriptors beyond the first are closed, so a
-    # caller that wants one can tell that more came. Waits for data while the socket is empty and raises
-    # `IO::TimeoutError` when `socket.read_timeout` elapses first. Raises
-    # `IO::Error` on a failure or when the kernel truncated the control
+    # caller that wants one can tell that more came.
+    #
+    # Waits for data while the socket is empty and raises `IO::TimeoutError`
+    # when `socket.read_timeout` elapses first. Raises `IO::Error` on a
+    # failure, and `TruncatedError` when the kernel truncated the control
     # data (the received descriptors are closed), which the size of the
     # control buffer rules out on Darwin.
     def receive(socket : UNIXSocket, *, buffer : Bytes) : Received
@@ -117,7 +120,7 @@ module Tunnelgeist
     private def take_descriptor(descriptors : Array(Int32), *, socket : UNIXSocket, message : LibSocket::Msghdr) : Int32?
       if (message.msg_flags & LibSocket::MSG_CTRUNC) != 0
         descriptors.each { |descriptor| LibC.close(descriptor) }
-        raise IO::Error.new("recvmsg: control data truncated", target: socket)
+        raise TruncatedError.new("recvmsg: control data truncated", target: socket)
       end
 
       keep_first(descriptors, socket: socket)

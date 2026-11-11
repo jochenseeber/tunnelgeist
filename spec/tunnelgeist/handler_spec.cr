@@ -704,6 +704,95 @@ describe TunnelgeistHandler do
       end
     end
 
+    test "two descriptors in two messages of one line are refused and both are closed" do
+      fixture = HandlerFixture.new
+      key = register(fixture)
+      first = fixture.fake_device(UTUN9)
+      second = fixture.fake_device(UTUN9)
+      begin
+        text = line(Protocol::AddRoute.new(name: UTUN9, key: key, route: route("10.98.0.0/16")))
+        reply = exchange(fixture, request: text[0, 10], fds: [first.fd]) do |client|
+          send_many(client, data: text[10..].to_slice, fds: [second.fd])
+          first.client.close
+          second.client.close
+        end.reply
+
+        assert(reply == Protocol::Reply.new(ok: false, error: "request must carry only the device's descriptor"))
+        assert(first.closed_everywhere?)
+        assert(second.closed_everywhere?)
+        assert(fixture.verified.empty?)
+        assert(fixture.commands.empty?)
+      ensure
+        first.close
+        second.close
+      end
+    end
+
+    test "a line dripped in one-byte messages that each carry a descriptor is refused at the second" do
+      fixture = HandlerFixture.new
+      device = fixture.fake_device(UTUN9)
+      client, server = UNIXSocket.pair
+      sent = Channel(Int32).new(1)
+      # The sender waits while the socket buffer is full, so the handler
+      # reads the messages as they come; once it refuses and closes, the
+      # next send fails.
+      spawn do
+        count = 0
+        begin
+          300.times do
+            FdPassing.send(client, data: Bytes['{'.ord.to_u8], fd: device.fd)
+            count += 1
+          end
+        rescue IO::Error
+          # The handler has closed the connection; that is the case under test.
+        ensure
+          sent.send(count)
+        end
+      end
+      begin
+        fixture.handler.handle(server)
+        reply = read_reply(client).reply
+        count = sent.receive
+        device.client.close
+
+        assert(reply == Protocol::Reply.new(ok: false, error: "request must carry only the device's descriptor"))
+        assert(count < 300)
+        assert(device.closed_everywhere?)
+        assert(fixture.verified.empty?)
+      ensure
+        client.close
+        device.close
+      end
+    end
+
+    test "a descriptor sent with an empty line is closed" do
+      fixture = HandlerFixture.new
+      device = fixture.fake_device(UTUN9)
+      begin
+        reply = exchange(fixture, request: "\n", fds: [device.fd]) { device.client.close }.reply
+
+        assert(reply == Protocol::Reply.new(ok: false, error: "no request"))
+        assert(device.closed_everywhere?)
+      ensure
+        device.close
+      end
+    end
+
+    test "a descriptor sent with a line that does not end in time is closed" do
+      fixture = HandlerFixture.new
+      device = fixture.fake_device(UTUN9)
+      begin
+        reply = exchange(fixture, request: "{", fds: [device.fd], handler: fixture.handler(request_timeout: 100.milliseconds)) do
+          device.client.close
+        end.reply
+
+        assert(reply.error.to_s.starts_with?("no request within"))
+        assert(device.closed_everywhere?)
+      ensure
+        device.close
+      end
+    end
+
     test "a descriptor that comes with a later piece of the line is the request's" do
       fixture = HandlerFixture.new
       key = register(fixture)
