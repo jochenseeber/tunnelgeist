@@ -61,7 +61,8 @@ module Tunnelgeist
     # *descriptor_name* answers the interface name of the descriptor a
     # change carries and raises `IO::Error` for one that is no utun device;
     # by default the kernel's answer, `Device.name_of`. The daemon keeps the
-    # default *max_connections_per_user*.
+    # default *max_connections_per_user*; raises `ArgumentError` when it is
+    # below 1.
     def initialize(@registry : Registry, *,
                    @create_device : (InterfaceName?, Int32) -> Device::Utun = ->(name : InterfaceName?, mtu : Int32) { Device.create(name, mtu: mtu) },
                    @run : CommandRunner::Run = CommandRunner.default,
@@ -73,6 +74,10 @@ module Tunnelgeist
                    @descriptor_name : Int32 -> InterfaceName = ->(fd : Int32) { Device.name_of(fd) },
                    @max_connections_per_user : Int32 = MAX_CONNECTIONS_PER_USER,
                    @log : Log)
+      if @max_connections_per_user < 1
+        raise ArgumentError.new("max_connections_per_user must be at least 1, not #{@max_connections_per_user}")
+      end
+
       @refusal = "not permitted: not in group #{group} or not allowed by a client configuration"
     end
 

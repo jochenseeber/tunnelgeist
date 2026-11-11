@@ -586,5 +586,13 @@ describe TunnelgeistRegistry do
       assert(names(registry.entries_counting_against(501_u32)) == ["utun7", "utun8"])
       assert(names(registry.entries_counting_against(502_u32)) == ["utun7", "utun8", "utun9"])
     end
+
+    test "new refuses device limits below 1" do
+      total = raised(ArgumentError) { Tunnelgeist::Registry.new(max_devices: 0) }
+      per_user = raised(ArgumentError) { Tunnelgeist::Registry.new(max_devices_per_user: -1) }
+
+      assert(total.message == "max_devices must be at least 1, not 0")
+      assert(per_user.message == "max_devices_per_user must be at least 1, not -1")
+    end
   {% end %}
 end

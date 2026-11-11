@@ -44,8 +44,14 @@ module Tunnelgeist
     MAX_DEVICES_PER_USER = 16
 
     # A registry with no device; a restarted daemon starts like this, so every
-    # earlier device is unknown. The daemon keeps the default limits.
+    # earlier device is unknown. The daemon keeps the default limits; raises
+    # `ArgumentError` when one is below 1.
     def initialize(*, @max_devices : Int32 = MAX_DEVICES, @max_devices_per_user : Int32 = MAX_DEVICES_PER_USER)
+      raise ArgumentError.new("max_devices must be at least 1, not #{@max_devices}") if @max_devices < 1
+      if @max_devices_per_user < 1
+        raise ArgumentError.new("max_devices_per_user must be at least 1, not #{@max_devices_per_user}")
+      end
+
       @entries = {} of InterfaceName => Entry
       @reservations = Set(Reservation).new
       # The slots taken, per owner and in total: one per outstanding

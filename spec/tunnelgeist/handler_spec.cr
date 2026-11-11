@@ -1504,5 +1504,13 @@ describe TunnelgeistHandler do
       assert(fixture.registry.with_entry(UTUN8, &.index) == 20_u32)
       assert(fixture.logged?("op=create name=utun7 removed: interface index 19 now 0"))
     end
+
+    test "new refuses a per-user connection limit below 1" do
+      fixture = HandlerFixture.new
+
+      error = raised(ArgumentError) { fixture.handler(max_connections_per_user: 0) }
+
+      assert(error.message == "max_connections_per_user must be at least 1, not 0")
+    end
   {% end %}
 end
