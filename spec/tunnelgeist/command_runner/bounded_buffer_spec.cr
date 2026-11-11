@@ -9,11 +9,11 @@ describe Tunnelgeist::CommandRunner::BoundedBuffer do
 
     test "text is everything appended while it fits the limit" do
       buffer = BoundedBuffer.new(limit: 8)
-      buffer.append("abc".to_slice)
-      buffer.append("defgh".to_slice)
+      buffer.append("door".to_slice)
+      buffer.append("bell".to_slice)
 
       assert(!buffer.truncated?)
-      assert(buffer.text == "abcdefgh")
+      assert(buffer.text == "doorbell")
     end
 
     test "text is empty when nothing was appended" do
@@ -24,13 +24,13 @@ describe Tunnelgeist::CommandRunner::BoundedBuffer do
     end
 
     test "text keeps the first bytes up to the limit and marks the cut" do
-      buffer = BoundedBuffer.new(limit: 4)
-      buffer.append("abc".to_slice)
-      buffer.append("defgh".to_slice)
-      buffer.append("ijk".to_slice)
+      buffer = BoundedBuffer.new(limit: 6)
+      buffer.append("red ".to_slice)
+      buffer.append("green ".to_slice)
+      buffer.append("blue".to_slice)
 
       assert(buffer.truncated?)
-      assert(buffer.text == "abcd … (truncated)")
+      assert(buffer.text == "red gr … (truncated)")
     end
 
     test "the marker is a space, an ellipsis and the word truncated in parentheses" do
