@@ -3,10 +3,13 @@ require "../../src/tunnelgeist/server"
 require "./support/client_configs"
 require "./support/temporary_directory"
 require "./support/registrations"
+require "./support/server_runs"
 
 # The accept loop of the daemon and its idle exit (UA5).
 describe TunnelgeistServer do
   {% if flag?(:darwin) %}
+    include TunnelgeistServerRuns
+
     UTUN7 = Tunnelgeist::InterfaceName.new("utun7")
 
     def empty_addresses : Array(Tunnelgeist::Address)
@@ -59,25 +62,6 @@ describe TunnelgeistServer do
         ensure
           listener.close
         end
-      end
-    end
-
-    # Runs *server* in a fiber; the channel receives when `run` returns.
-    def start(server : Tunnelgeist::Server) : Channel(Nil)
-      done = Channel(Nil).new(1)
-      spawn do
-        server.run
-        done.send(nil)
-      end
-      done
-    end
-
-    def returned?(done : Channel(Nil), *, within : Time::Span) : Bool
-      select
-      when done.receive
-        true
-      when timeout(within)
-        false
       end
     end
 
@@ -140,24 +124,6 @@ describe TunnelgeistServer do
         fixture.registry.remove(UTUN7)
         finished = returned?(done, within: 500.milliseconds)
         assert(finished)
-      end
-    end
-
-    # Sends a request that does not parse on *client* and reads the reply in
-    # a fiber; the channel receives the reply line.
-    def ask(client : UNIXSocket) : Channel(String)
-      reply = Channel(String).new(1)
-      client.print("not json\n")
-      spawn { reply.send(client.gets.to_s) }
-      reply
-    end
-
-    def received?(reply : Channel(String), *, within : Time::Span) : Bool
-      select
-      when reply.receive
-        true
-      when timeout(within)
-        false
       end
     end
 

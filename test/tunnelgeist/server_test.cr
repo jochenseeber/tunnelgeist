@@ -2,6 +2,7 @@ require "../test_helper"
 require "socket"
 require "../../src/tunnelgeist/server"
 require "../../spec/tunnelgeist/support/client_configs"
+require "../../spec/tunnelgeist/support/server_runs"
 require "./support/temporary_directory"
 
 # The accept loop of the daemon at its connection limit, with clients
@@ -9,38 +10,23 @@ require "./support/temporary_directory"
 # collaborators replaced by fakes.
 describe TunnelgeistServer do
   {% if flag?(:darwin) %}
-    # Runs *server* in a fiber; the channel receives when `run` returns.
-    def start(server : Tunnelgeist::Server) : Channel(Nil)
-      done = Channel(Nil).new(1)
-      spawn do
-        server.run
-        done.send(nil)
-      end
-      done
-    end
+    include TunnelgeistServerRuns
 
-    # Connects to *path*, sends a request that does not parse and reads the
-    # reply in a fiber; the channel receives the reply line.
+    # Connects to *path* and asks as `ask` does; *clients* collects the
+    # connection for the caller to close.
     def ask(path : String, *, clients : Array(UNIXSocket)) : Channel(String)
       client = UNIXSocket.new(path)
       clients << client
-      reply = Channel(String).new(1)
-      client.print("not json\n")
-      spawn { reply.send(client.gets.to_s) }
-      reply
+      ask(client)
     end
 
     # Whether every channel of *replies* receives an error reply within
-    # *within*.
+    # *within* of the call.
     def answered?(replies : Array(Channel(String)), *, within : Time::Span) : Bool
       deadline = Time.instant + within
       replies.all? do |reply|
-        select
-        when line = reply.receive
-          line.includes?(%("ok":false))
-        when timeout({deadline - Time.instant, Time::Span.zero}.max)
-          false
-        end
+        line = reply_within(reply, within: {deadline - Time.instant, Time::Span.zero}.max)
+        !line.nil? && line.includes?(%("ok":false))
       end
     end
 
@@ -68,12 +54,7 @@ describe TunnelgeistServer do
           recovered = answered?(waiting, within: 2.seconds)
           again = answered?([ask(path, clients: clients)], within: 2.seconds)
           clients.each(&.close)
-          finished = select
-          when done.receive
-            true
-          when timeout(1.second)
-            false
-          end
+          finished = returned?(done, within: 1.second)
 
           assert(saturated)
           assert(recovered)

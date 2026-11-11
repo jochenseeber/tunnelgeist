@@ -248,17 +248,20 @@ and `examples_spec.cr` for the configuration in `examples/config`;
 client configurations and admissions by hand for the specs of the authorizer,
 the handler, the server, the client and the configuration holder,
 `fake_membership.cr` and `fake_peer.cr` stand in for the group and the peer,
-`descriptor_sender.cr` sends several descriptors in one message, and
-`temporary_directory.cr` makes the temporary directories. A spec reads fixtures
-from the project itself, such as `examples/config` and `docs/protocol.md`, and
-writes only below its temporary directory.
+`descriptor_sender.cr` sends several descriptors in one message,
+`registrations.cr` registers devices with a reservation, `server_runs.cr` runs
+a server in a fiber and asks it as a client, and `temporary_directory.cr` makes
+the temporary directories. A spec reads fixtures from the project itself, such
+as `examples/config` and `docs/protocol.md`, and writes only below its
+temporary directory.
 
 `test/test_helper.cr` does the same for the integration tests in
 `test/tunnelgeist/`, named `*_test.cr` after the spec of the same source file;
 `test/tunnelgeist/support/` holds their helpers: `own_peer.cr` reads this
 process as a peer, and `temporary_directory.cr` is the suite's own copy of the
-temporary directories. They may also use the spec helper `client_configs.cr`.
-`test/daemon/device_test.cr` holds the daemon tests.
+temporary directories. They may also use the spec helpers `client_configs.cr`,
+`registrations.cr` and `server_runs.cr`. `test/daemon/device_test.cr` holds the
+daemon tests.
 
 ## Releasing
 
