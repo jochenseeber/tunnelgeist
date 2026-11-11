@@ -843,6 +843,7 @@ describe TunnelgeistInstall do
         assert(info.owner_id == layout.owner.uid.to_s)
       end
     end
+
     test "install refuses a configuration directory whose ACL lets everyone add files before it changes anything" do
       with_layout do |layout|
         Dir.mkdir_p(layout.paths.config_directory, 0o755)
