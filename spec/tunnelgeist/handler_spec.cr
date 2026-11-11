@@ -76,6 +76,8 @@ describe TunnelgeistHandler do
       getter peers = [] of Tunnelgeist::Peer
       # The descriptors the fake name lookup was asked about.
       getter verified = [] of Int32
+      # What the fake name lookup raises for every descriptor, when set.
+      property lookup_error : IO::Error? = nil
       # Runs inside the fake command runner, before the command's result.
       property on_run : Proc(Nil)? = nil
       # The interface names of the fake devices, by the inode of the client's
@@ -119,10 +121,13 @@ describe TunnelgeistHandler do
 
       # The fake name lookup: records *fd* and answers the name of the fake
       # device it is a copy of; raises as `Device.name_of` does for any
-      # other descriptor.
+      # other descriptor, and *lookup_error* when one is set.
       def descriptor_name(fd : Int32) : Tunnelgeist::InterfaceName
         @verified << fd
-        @device_names[inode(fd)]? || raise IO::Error.new("UTUN_OPT_IFNAME: Invalid argument")
+        error = @lookup_error
+        raise error if error
+
+        @device_names[inode(fd)]? || raise IO::Error.new("descriptor is not a kernel control socket")
       end
 
       # The inode of *fd*, which every copy of a descriptor shares.
@@ -630,6 +635,31 @@ describe TunnelgeistHandler do
       assert(fixture.commands.empty?)
       assert(!recorded?(fixture, key: key, item: v4(3)))
       assert(fixture.logged?("op=add_address name=utun9 failed: descriptor is not a utun device"))
+    end
+
+    test "a failed lookup of the utun control is logged as the daemon's error and refuses the change" do
+      fixture = HandlerFixture.new
+      key = register(fixture)
+      fixture.lookup_error = Tunnelgeist::Device::ControlLookupError.new("CTLIOCGINFO com.apple.net.utun_control: Operation not permitted")
+
+      reply = change(fixture, Protocol::AddRoute.new(name: UTUN9, key: key, route: route("10.98.0.0/16")))
+
+      assert(reply == Protocol::Reply.new(ok: false, error: "descriptor is not a utun device"))
+      assert(fixture.commands.empty?)
+      logged = fixture.backend.entries.find { |entry| entry.severity.error? }
+      assert(logged)
+      assert(logged.try(&.message.ends_with?(
+        "op=add_route name=utun9 utun control lookup failed: CTLIOCGINFO com.apple.net.utun_control: Operation not permitted")))
+    end
+
+    test "a descriptor that is no utun device is not logged as the daemon's error" do
+      fixture = HandlerFixture.new
+      key = register(fixture)
+
+      reply = change(fixture, Protocol::AddRoute.new(name: UTUN9, key: key, route: route("10.98.0.0/16")), device: nil)
+
+      assert(reply.error == "descriptor is not a utun device")
+      assert(fixture.backend.entries.none?(&.severity.error?))
     end
 
     test "a change with the descriptor of another device is refused, names both and runs nothing" do

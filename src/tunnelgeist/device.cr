@@ -1,5 +1,6 @@
 {% skip_file unless flag?(:darwin) %}
 
+require "./device/control_lookup_error"
 require "./device/lib_utun"
 require "./device/utun"
 require "./interface_name"
@@ -84,7 +85,9 @@ module Tunnelgeist
     #
     # Raises `IO::Error` when *fd* is no connected utun control socket: with
     # the system's message when `getpeername` fails (a pipe, an unconnected
-    # socket), and saying why the address is not a utun's otherwise.
+    # socket), and saying why the address is not a utun's otherwise. Raises
+    # `ControlLookupError` when the utun control's id cannot be looked up,
+    # which is no fault of *fd*.
     def name_of(fd : Int32) : InterfaceName
       address = LibUtun::SockaddrCtl.new
       size = LibC::SocklenT.new(sizeof(LibUtun::SockaddrCtl))
@@ -103,6 +106,7 @@ module Tunnelgeist
     end
 
     # The id of the utun control, looked up once on a socket of its own.
+    # Raises `ControlLookupError` when the lookup fails.
     private def utun_control_id : UInt32
       @@utun_control_id ||= begin
         fd = LibC.socket(LibUtun::PF_SYSTEM, LibC::SOCK_DGRAM, LibUtun::SYSPROTO_CONTROL)
@@ -113,6 +117,8 @@ module Tunnelgeist
         ensure
           LibC.close(fd)
         end
+      rescue error : IO::Error
+        raise ControlLookupError.new(error.message, cause: error)
       end
     end
 

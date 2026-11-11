@@ -249,7 +249,7 @@ module Tunnelgeist
     private def change(socket : UNIXSocket, *, peer : Peer, admission : Authorizer::Admission,
                        request : Protocol::DeviceRequest, line : RequestLine) : Nil
       refused = begin
-        line.pin(request.name, name_of: @descriptor_name)
+        pin(line, peer: peer, request: request)
         @registry.with_entry(request.name, key: request.key) do |entry|
           index = @interface_index.call(entry.name)
           if index == 0 || index != entry.index
@@ -271,6 +271,21 @@ module Tunnelgeist
 
       reply(socket, peer: peer, reply: Protocol::Reply.new(ok: true))
       @log.info { "#{describe_peer(peer)} op=#{request.operation.wire} name=#{request.name} ok" }
+    end
+
+    # Pins the device of *request* with the descriptor of *line*, as
+    # `RequestLine#pin` does. A failed lookup of the utun control is the
+    # daemon's own failure, not the client's: the client gets the refusal
+    # of a descriptor that is no utun device, and the log says at error
+    # what failed, so the operator can tell the two apart.
+    private def pin(line : RequestLine, *, peer : Peer, request : Protocol::DeviceRequest) : Nil
+      line.pin(request.name, name_of: @descriptor_name)
+    rescue error : Protocol::Error
+      cause = error.cause
+      if cause.is_a?(Device::ControlLookupError)
+        @log.error { "#{describe_peer(peer)} op=#{request.operation.wire} name=#{request.name} utun control lookup failed: #{cause.message}" }
+      end
+      raise error
     end
 
     # Checks the change of *request* against *admission* and *entry*, runs
