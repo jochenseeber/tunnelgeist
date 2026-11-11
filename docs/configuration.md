@@ -180,7 +180,8 @@ named in the error, as in
 or `/usr/local/etc/tunnelgeist/clients.d: grants write access through its ACL`.
 `/etc` and `/var` are symbolic links to `/private/etc` and `/private/var`, so
 name a configuration there by its `/private` path. A relative `--config` path
-is taken from the working directory, whose directories pass the same checks.
+is taken from the physical working directory, as `pwd -P` prints it, whose
+directories pass the same checks.
 
 `ls -le` shows a file's ACL and `chmod -N` removes it. The `clients.d`
 directory `install` creates is owned by root:wheel with mode 0755, so a

@@ -1,5 +1,7 @@
 {% skip_file unless flag?(:darwin) %}
 
+require "c/limits"
+require "c/unistd"
 require "json"
 require "socket"
 require "system/user"
@@ -37,14 +39,14 @@ module Tunnelgeist
     # reader finds, names the line and column and the field path; one the
     # loader's checks find names the field path only.
     #
-    # A relative main path is taken relative to the working directory. A
-    # relative include entry is opened from the main file's checked
-    # directory, an absolute one walks from `/`; a `..` component is refused
-    # in either, and in the main path, since the walk only goes down. Only
-    # the last path component of an entry may hold glob characters (`*`,
-    # `?`, `[`); it is matched against the names in its checked directory,
-    # so glob characters in the directory names never count, and hidden
-    # names match only a pattern that starts with a dot.
+    # A relative main path is taken relative to the physical working
+    # directory. A relative include entry is opened from the main file's
+    # checked directory, an absolute one walks from `/`; a `..` component is
+    # refused in either, and in the main path, since the walk only goes
+    # down. Only the last path component of an entry may hold glob
+    # characters (`*`, `?`, `[`); it is matched against the names in its
+    # checked directory, so glob characters in the directory names never
+    # count, and hidden names match only a pattern that starts with a dot.
     class Loader
       # How `JSON::Serializable` starts the error about a missing field, the
       # one error of its own the loader words in its terms.
@@ -79,8 +81,21 @@ module Tunnelgeist
       # *path* from `/`, relative to the working directory when it is
       # relative, without empty and `.` components.
       protected def self.absolute(path : String) : String
-        full = path.starts_with?('/') ? path : "#{Dir.current}/#{path}"
+        full = path.starts_with?('/') ? path : "#{working_directory(path)}/#{path}"
         "/#{names(full).join('/')}"
+      end
+
+      # The physical working directory, which `getcwd` reads from the kernel.
+      # `Dir.current` returns `$PWD` when that names the same directory,
+      # which may lead through a symbolic link such as `/var`, which the
+      # walk refuses. Raises `Config::Error` about the relative *path* when
+      # the directory cannot be read.
+      private def self.working_directory(path : String) : String
+        buffer = Bytes.new(LibC::PATH_MAX)
+        if LibC.getcwd(buffer, buffer.size).null?
+          raise Error.new("cannot be resolved: the working directory cannot be read: #{Errno.value.message}", file: path)
+        end
+        String.new(buffer.to_unsafe)
       end
 
       # The components of *path*, without empty and `.` ones.

@@ -60,6 +60,7 @@ forall
 fsec
 fstat
 fstatat
+getcwd
 getegid
 geteuid
 getfd

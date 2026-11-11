@@ -205,6 +205,33 @@ describe TunnelgeistConfig do
       end
     end
 
+    test "load takes a relative main path from the physical working directory, not from PWD" do
+      with_trusted_directory do |directory|
+        real = File.join(directory, "real")
+        write(directory, name: "real/config.json", content: %({"socket": "/var/run/tg.sock", "group": "tg",
+          "clients": [{"name": "c"}]}))
+        link = File.join(directory, "link")
+        File.symlink(real, link)
+        logical = ENV["PWD"]?
+        begin
+          Dir.cd(real) do
+            # A shell started in the link would say so in PWD, which
+            # `Dir.current` returns when it names the working directory.
+            ENV["PWD"] = link
+
+            assert(staff_loader("config.json").load.clients.map(&.name) == ["c"])
+            assert(raised(Config::Error) { staff_loader("missing.json").load }.message == "#{real}/missing.json: does not exist")
+          end
+        ensure
+          if logical
+            ENV["PWD"] = logical
+          else
+            ENV.delete("PWD")
+          end
+        end
+      end
+    end
+
     test "load refuses a main file over 1 MiB" do
       with_trusted_directory do |directory|
         main = write(directory, name: "config.json", content: " " * 1_048_577)
