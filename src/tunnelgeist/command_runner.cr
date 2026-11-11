@@ -22,7 +22,7 @@ module Tunnelgeist
     # One token per program running: a run sends one before it starts its
     # program, which blocks while all are taken, and receives it back when
     # the program has ended.
-    SLOTS = Channel(Nil).new(COMMAND_CONCURRENCY)
+    private SLOTS = Channel(Nil).new(COMMAND_CONCURRENCY)
 
     # Runs an argument vector and returns its `Result`.
     alias Run = Array(String) -> Result
