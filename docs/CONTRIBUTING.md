@@ -92,12 +92,13 @@ The tests are written with microtest and come in three sets:
   primary group, and one client, `daemon-test`, that allows addresses in
   `10.77.0.0/16` with peers there and routes to `10.78.0.0/16` and
   `10.79.0.0/16`, and nothing else. The task starts the daemon with
-  `sudo .work/tunnelgeist serve --config PATH`, its standard output and error
-  going to `$TMPDIR/tunnelgeist-exercise-HASH-TIME.log`, whose path it prints
-  and keeps, runs the tests as you with `TUNNELGEIST_SOCKET` set, then stops
-  the daemon and removes the configuration and its directory with `sudo`, also
-  when a step failed, and warns when it cannot. A new daemon test that needs
-  another prefix widens that configuration in `rakelib/tunnelgeist.rake`.
+  `sudo -n .work/tunnelgeist serve --config PATH`, its standard input the null
+  device and its standard output and error going to
+  `$TMPDIR/tunnelgeist-exercise-HASH-TIME.log`, whose path it prints and keeps,
+  runs the tests as you with `TUNNELGEIST_SOCKET` set, then stops the daemon
+  and removes the configuration and its directory with `sudo`, also when a step
+  failed, and warns when it cannot. A new daemon test that needs another prefix
+  widens that configuration in `rakelib/tunnelgeist.rake`.
 
 A test that needs anything outside the project is an integration test, even
 when only one assertion of it does. Code is not given a test seam to keep a

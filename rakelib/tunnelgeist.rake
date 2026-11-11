@@ -184,13 +184,17 @@ task "exercise" => "prepare" do
     daemon_pid = nil
     # The daemon's standard output and error go to a file of their own, so
     # its log does not mix with the tests' output; the file is kept for
-    # reading after the run.
+    # reading after the run. Its standard input is the null device: sudo
+    # puts a terminal it finds there into raw mode while the daemon runs,
+    # and the tests' lines would then lose their carriage returns. `-n`
+    # keeps that sudo from prompting; `sudo -v` above cached the password.
     started = Time.now.strftime("%Y%m%d-%H%M%S")
     log = File.join(Dir.tmpdir, "tunnelgeist-exercise-#{checkout}-#{started}.log")
     log_file = File.open(log, File::WRONLY | File::CREAT | File::EXCL, 0o600)
     puts "tunnelgeist's output goes to #{log}"
     pid = begin
-      Process.spawn("sudo", File.expand_path(daemon), "serve", "--config", config, %i[out err] => log_file)
+      Process.spawn("sudo", "-n", File.expand_path(daemon), "serve", "--config", config,
+                    :in => File::NULL, %i[out err] => log_file)
     ensure
       log_file.close
     end
