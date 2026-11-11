@@ -42,8 +42,11 @@ module Tunnelgeist
         "#{name} #{outcome}"
       end
 
-      # *span* in seconds, without a fraction when it is whole.
       private def seconds(span : Time::Span) : String
+        # *span* in seconds, without a fraction when it is whole. Not a doc
+        # comment above the def: `crystal docs` of Crystal 1.22 writes the doc
+        # of a private def in a `record` block between `private` and `def`
+        # when it expands the macro, and fails to parse the result.
         whole = span.total_seconds.to_i64
         whole.seconds == span ? whole.to_s : span.total_seconds.to_s
       end
