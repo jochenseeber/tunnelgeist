@@ -26,7 +26,7 @@ describe Tunnelgeist::FdPassing do
 
     # The descriptors currently open in this process.
     def open_descriptors : Int32
-      (0..255).count { |fd| LibC.fcntl(fd, LibC::F_GETFD) != -1 }
+      (0...1_024).count { |fd| LibC.fcntl(fd, LibC::F_GETFD) != -1 }
     end
 
     test "a pipe descriptor sent with data arrives open and usable" do
@@ -117,25 +117,26 @@ describe Tunnelgeist::FdPassing do
       [left, right, first_reader, first_writer, second_reader, second_writer].each(&.try(&.close))
     end
 
-    test "more descriptors than the control buffer holds raise IO::Error and close the ones that arrived" do
+    test "200 descriptors in one message all arrive, and all but the first are closed" do
       left, right = UNIXSocket.pair
-      pipes = Array.new(16) { IO.pipe }
+      reader, writer = IO.pipe
       before = open_descriptors
 
-      send_many(left, data: "x".to_slice, fds: pipes.map { |_, writer| writer.fd })
-      raised(IO::Error) do
-        Tunnelgeist::FdPassing.receive(right, buffer: Bytes.new(4))
-      end
+      # Darwin lets one message carry up to 254 (sendmsg refuses more as an
+      # invalid argument, checked with a C program); 200 stays under a soft
+      # limit of 256 open descriptors. The kernel installs one descriptor per
+      # copy.
+      send_many(left, data: "x".to_slice, fds: Array.new(200, writer.fd))
+      received = Tunnelgeist::FdPassing.receive(right, buffer: Bytes.new(4))
 
-      # The kernel installs all 16 descriptors but reports only the 13 that
-      # fit the buffer, so receive can close those 13 and no more; the other
-      # 3 are unreachable (checked with a C program on Darwin). Without the
-      # cleanup 13 more would stay open.
-      assert(open_descriptors - before <= 3)
+      # A control buffer too small for them would make the kernel install
+      # every descriptor but report only those that fit, and the rest would
+      # stay open and unreachable.
+      assert(open_descriptors - before == 1)
+      LibC.close(received.fd!)
+      assert(open_descriptors == before)
     ensure
-      pipes.try(&.each { |reader, writer| reader.close; writer.close })
-      left.try(&.close)
-      right.try(&.close)
+      [left, right, reader, writer].each(&.try(&.close))
     end
   {% end %}
 end

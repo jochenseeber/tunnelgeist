@@ -12,10 +12,14 @@ module Tunnelgeist
     extend self
 
     # The size in bytes of the control buffer `receive` supplies; room for
-    # 13 descriptors. When a peer sends more, Darwin installs them all but
-    # reports only those that fit, so the rest stay open and unreachable;
-    # the peer is the authenticated daemon, which sends one.
-    private CONTROL_WORDS = 16
+    # 509 descriptors. When a message carries more than fit, Darwin installs
+    # them all but reports only those that fit, so the rest would stay open
+    # and unreachable. One message carries at most 254 (sendmsg refuses
+    # more as an invalid argument, checked with a C program on Darwin), and
+    # a stream socket's `recvmsg` returns the control data of one message
+    # only, so every descriptor that arrives is reported, and no peer can
+    # leave descriptors open in the receiver.
+    private CONTROL_WORDS = 512
     private CONTROL_SIZE  = CONTROL_WORDS * 4
 
     # Sends all of *data* in one `sendmsg`, with *fd* attached when given.
@@ -75,7 +79,8 @@ module Tunnelgeist
     # the first are closed. Waits for data while the socket is empty and raises
     # `IO::TimeoutError` when `socket.read_timeout` elapses first. Raises
     # `IO::Error` on a failure or when the kernel truncated the control
-    # data (the received descriptors are closed).
+    # data (the received descriptors are closed), which the size of the
+    # control buffer rules out on Darwin.
     def receive(socket : UNIXSocket, *, buffer : Bytes) : Received
       iov = LibSocket::Iovec.new(iov_base: buffer.to_unsafe.as(Void*), iov_len: buffer.size)
       control = StaticArray(UInt32, CONTROL_WORDS).new(0_u32)
