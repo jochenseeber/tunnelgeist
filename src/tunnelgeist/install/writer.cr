@@ -88,7 +88,8 @@ module Tunnelgeist
       # and renames it over *path*, so *path* never holds a partial file.
       # The temporary file is created mode 0600 and the owner and mode are
       # set on its descriptor, so no one else can read it before *mode* is
-      # set; it is removed when anything fails.
+      # set; it is removed when anything fails, and a `Failure` says so when
+      # it cannot be.
       def write(path : String, *, mode : Int32, & : IO ->) : Nil
         directory = reach(File.dirname(path), create: false)
         begin
@@ -159,7 +160,7 @@ module Tunnelgeist
         temporary = "#{name}.#{Random::Secure.hex(8)}.tmp"
         temporary_path = File.join(directory.path, temporary)
         fd = LibDirectory.openat(directory.fd, temporary, OPEN_TEMPORARY, PRIVATE_FILE_MODE)
-        raise File::Error.from_errno("Error opening file with mode 'wb'", file: temporary_path) if fd < 0
+        raise Failure.new("#{temporary_path}: cannot create the temporary file: #{Errno.value.message}") if fd < 0
 
         begin
           file = IO::FileDescriptor.new(fd)
@@ -174,9 +175,19 @@ module Tunnelgeist
             raise File::Error.from_errno("Error renaming file", file: temporary_path, other: File.join(directory.path, name))
           end
         rescue error
-          LibDirectory.unlinkat(directory.fd, temporary, 0)
-          raise error
+          remove_temporary(directory, name: temporary, path: temporary_path, failure: error)
         end
+      end
+
+      # Removes the temporary file *name* in *directory*, at *path*, after
+      # *failure* and raises *failure* again; when the file stays behind,
+      # a `Failure` that says so as well.
+      private def remove_temporary(directory : TrustedDirectory, *, name : String, path : String,
+                                   failure : Exception) : NoReturn
+        raise failure if LibDirectory.unlinkat(directory.fd, name, 0) == 0
+
+        raise Failure.new("#{failure.message}; the temporary file #{path} could not be removed: #{Errno.value.message}",
+          cause: failure)
       end
 
       # Gives the open *fd* of *path* the owner and *mode*.
