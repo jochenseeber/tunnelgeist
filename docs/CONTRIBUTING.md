@@ -75,13 +75,15 @@ The tests are written with microtest and come in three sets:
   changed with its own descriptor, that a change sent as the client closes the
   device's last descriptor lands on that device and not on the next device of
   its name, that the daemon refuses a change sent with another device's
-  descriptor and a second address with the same local address, and that it
-  refuses an address and a route its configuration does not allow
-  (`10.99.0.1/24`, `10.99.0.0/16`) without creating a device. They need macOS
-  and root for the daemon only; the tests themselves run as you, as any client
-  does, and find the daemon's socket in `TUNNELGEIST_SOCKET`.
-  `rake test:daemon` builds the daemon and the tests, runs `sudo -v` (the one
-  password prompt) and writes the daemon's configuration with `sudo` to
+  descriptor and a second address with the same local address, that it refuses
+  an address and a route its configuration does not allow (`10.99.0.1/24`,
+  `10.99.0.0/16`) without creating a device, and that it keeps at most 16
+  devices of one user. Each test waits for the interfaces of its devices to go
+  before the next one starts. They need macOS and root for the daemon only; the
+  tests themselves run as you, as any client does, and find the daemon's socket
+  in `TUNNELGEIST_SOCKET`. `rake test:daemon` builds the daemon and the tests,
+  runs `sudo -v` (the one password prompt) and writes the daemon's
+  configuration with `sudo` to
   `/private/var/root/tunnelgeist-daemon-test/config.json`, in root's home. The
   daemon reads its configuration only through directories root owns, and your
   home directory is yours. The configuration names the socket

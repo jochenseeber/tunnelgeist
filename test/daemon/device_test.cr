@@ -8,13 +8,19 @@ require "socket"
 require "../../src/tunnelgeist/client"
 require "../../src/tunnelgeist/commands"
 require "../../src/tunnelgeist/fd_passing"
+require "../../src/tunnelgeist/lib_system"
 
 describe TunnelgeistDaemon do
   {% if flag?(:darwin) %}
     @files = {} of Int32 => IO::FileDescriptor
+    @names = [] of Tunnelgeist::InterfaceName
 
+    # The kernel removes a closed device's interface a moment later, and
+    # the devices of one user count against its limit until then, so each
+    # test waits for its devices to go before the next one starts.
     after do
       @files.each_value { |file| file.close unless file.closed? }
+      @names.each { |name| wait_until { !interface?(name) } }
     end
 
     test "the kernel's ping arrives on the device and its route goes when removed" do
@@ -121,6 +127,27 @@ describe TunnelgeistDaemon do
       end
     end
 
+    test "the daemon keeps at most 16 devices of one user and takes a new one once one is closed" do
+      bare = [] of Tunnelgeist::Address
+      devices = Array.new(16) { create_device(addresses: bare, routes: [] of Tunnelgeist::Prefix) }
+      before = utun_interfaces
+
+      error = raised(Tunnelgeist::Client::Error) do
+        create_device(addresses: bare, routes: [] of Tunnelgeist::Prefix)
+      end
+
+      assert(error.reason.refused?)
+      assert(error.message == "device limit of 16 reached for uid #{Tunnelgeist::LibSystem.geteuid}")
+      assert(utun_interfaces == before)
+
+      closed = devices.first
+      open_device(closed).close
+      wait_until { !interface?(closed.name) }
+
+      fresh = create_device(addresses: bare, routes: [] of Tunnelgeist::Prefix)
+      assert(interface?(fresh.name))
+    end
+
     test "the daemon refuses an address outside its configuration and creates no device" do
       address = Tunnelgeist::Address.new(
         Socket::IPAddress.new("10.99.0.1", 0), prefix: 24, peer: Socket::IPAddress.new("10.99.0.2", 0))
@@ -218,6 +245,7 @@ describe TunnelgeistDaemon do
       file.read_timeout = 3.seconds
       file.read_buffering = false
       @files[device.fd] = file
+      @names << device.name
       device
     end
 
