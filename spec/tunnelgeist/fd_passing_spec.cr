@@ -13,6 +13,14 @@ describe Tunnelgeist::FdPassing do
     # The most descriptor numbers `free_descriptors` looks at.
     DESCRIPTOR_SCAN = 65_536
 
+    # Whether *reader*, a pipe's read end with nothing written to it, is at
+    # end of file, that is every copy of the write end is closed. Does not
+    # wait: a write end still open makes the read fail with EAGAIN.
+    def end_of_file?(reader : IO::FileDescriptor) : Bool
+      LibC.fcntl(reader.fd, LibC::F_SETFL, LibC.fcntl(reader.fd, LibC::F_GETFL) | LibC::O_NONBLOCK)
+      LibC.read(reader.fd, Bytes.new(1), 1) == 0
+    end
+
     # How many more descriptors this process may open under its soft limit.
     # Numbers past `DESCRIPTOR_SCAN` count as free, which only matters when
     # the limit is far above what a message carries.
@@ -113,9 +121,10 @@ describe Tunnelgeist::FdPassing do
       assert(received.descriptor_count == 2)
       # The second writer's last copy was closed by receive, so its reader
       # sees end of file; the first one is still held open by *received*.
-      assert(second_reader.read(Bytes.new(1)) == 0)
+      assert(end_of_file?(second_reader))
+      assert(!end_of_file?(first_reader))
       LibC.close(received.fd!)
-      assert(first_reader.read(Bytes.new(1)) == 0)
+      assert(end_of_file?(first_reader))
     ensure
       [left, right, first_reader, first_writer, second_reader, second_writer].each(&.try(&.close))
     end
@@ -138,9 +147,7 @@ describe Tunnelgeist::FdPassing do
       # keep the pipe's write end open, so its reader would see no end of
       # file.
       assert(received.descriptor_count == burst)
-      # Without waiting: 0 is end of file, -1 (EAGAIN) a write end still open.
-      LibC.fcntl(reader.fd, LibC::F_SETFL, LibC.fcntl(reader.fd, LibC::F_GETFL) | LibC::O_NONBLOCK)
-      assert(LibC.read(reader.fd, Bytes.new(1), 1) == 0)
+      assert(end_of_file?(reader))
     ensure
       [left, right, reader, writer].each(&.try(&.close))
     end
