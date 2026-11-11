@@ -6,13 +6,14 @@ require "../../src/tunnelgeist/config"
 require "../../src/tunnelgeist/config/address_rule"
 require "../../src/tunnelgeist/config/document/main"
 require "../../src/tunnelgeist/config/error"
+require "../../src/tunnelgeist/config/file_status"
 require "../../src/tunnelgeist/config/loader"
 require "../../src/tunnelgeist/config/location"
 require "../../src/tunnelgeist/signature_policy"
+require "./support/fake_directory"
 require "./support/fake_membership"
 require "./support/fake_peer"
 require "./support/temporary_directory"
-require "./support/trusted_temporary_directory"
 
 # The client configuration (CF1 to CF4) and its loader (CA1, CC1, CC2),
 # against files in a temporary directory with stubbed user, group and
@@ -48,7 +49,6 @@ describe TunnelgeistConfig do
         @directory = name ? File.join(@root, name) : @root
         Dir.mkdir_p(@directory)
         File.chmod(@directory, 0o755)
-        TunnelgeistTrustedTemporaryDirectory.check_trusted(@directory, owner: owner)
       end
 
       # The uid that owns the directory.
@@ -89,11 +89,15 @@ describe TunnelgeistConfig do
       # `bad` a requirement that does not compile, and every known group is
       # really `STAFF`. Users come from *find_user*, by default `USERS`. The
       # files must be owned by *owner*, by default the owner of the
-      # directory of *path*.
+      # directory of *path*. Directories are opened by a
+      # `TunnelgeistFakeDirectory`, with *statuses* in place of what the file
+      # system says about the paths they name.
       def loader(path : String, *, owner : UInt32 = TunnelgeistConfigTest.owner_of(File.dirname(path)),
-                 find_user : String -> UInt32? = ->(name : String) : UInt32? { USERS[name]? }) : Config::Loader
+                 find_user : String -> UInt32? = ->(name : String) : UInt32? { USERS[name]? },
+                 statuses : Hash(String, Config::FileStatus) = {} of String => Config::FileStatus) : Config::Loader
         Config::Loader.new(path: path, owner: owner,
           find_user: find_user,
+          open_directory: TunnelgeistFakeDirectory.opener(statuses: statuses),
           build_membership: ->(name : String) do
             @groups << name
             raise ArgumentError.new("unknown group #{name}") if name == "nosuch"
@@ -708,13 +712,14 @@ describe TunnelgeistConfig do
         fixture.write("config.json", content: main_json(clients: %([{"name": "c", "users": ["alice"], "groups": ["staff"]}])))
         failing_user = Config::Loader.new(path: fixture.main, owner: fixture.owner,
           find_user: ->(name : String) : UInt32? { raise RuntimeError.new("getpwnam_r: Input/output error") },
-          build_membership: ->(name : String) { STAFF })
+          build_membership: ->(name : String) { STAFF }, open_directory: TunnelgeistFakeDirectory.opener)
         failing_group = Config::Loader.new(path: fixture.main, owner: fixture.owner,
           find_user: ->(name : String) : UInt32? { USERS[name]? },
           build_membership: ->(name : String) do
             raise RuntimeError.new("getgrnam_r: Input/output error") if name == "staff"
             STAFF
-          end)
+          end,
+          open_directory: TunnelgeistFakeDirectory.opener)
 
         user_error = raised(Config::Error) { failing_user.load }
         group_error = raised(Config::Error) { failing_group.load }
@@ -837,18 +842,30 @@ describe TunnelgeistConfig do
       end
     end
 
-    test "load refuses a main file in a directory above which another uid owns" do
-      # The specs cannot give a file another owner; with another uid as the
-      # trusted owner, the first directory refused is the first one the uid
-      # running the specs owns, at the latest the fixture's own.
+    test "load refuses a main file owned by another uid" do
       with_fixture do |fixture|
         fixture.write("config.json", content: main_json)
-        owner = fixture.owner + 1
+        other = fixture.owner + 1
+        statuses = {fixture.main => Config::FileStatus.new(type: File::Type::File, owner: other, mode: 0o644_u16, size: 10_i64)}
 
-        error = load_error(fixture, owner: owner)
+        error = raised(Config::Error) { Lookups.new.loader(fixture.main, owner: fixture.owner, statuses: statuses).load }
 
-        assert(fixture.directory == error.file || fixture.directory.starts_with?("#{error.file}/"))
-        assert(error.reason == "directory must be owned by root or uid #{owner}, not uid #{fixture.owner}")
+        assert(error.file == fixture.main)
+        assert(error.message == "#{fixture.main}: must be owned by uid #{fixture.owner}, not uid #{other}")
+      end
+    end
+
+    test "load refuses a main file in a directory another uid owns" do
+      with_fixture do |fixture|
+        fixture.write("config.json", content: main_json)
+        other = fixture.owner + 1
+        statuses = {fixture.directory => Config::FileStatus.new(type: File::Type::Directory, owner: other,
+          mode: 0o755_u16, size: 64_i64)}
+
+        error = raised(Config::Error) { Lookups.new.loader(fixture.main, owner: fixture.owner, statuses: statuses).load }
+
+        assert(error.file == fixture.directory)
+        assert(error.message == "#{fixture.directory}: directory must be owned by root or uid #{fixture.owner}, not uid #{other}")
       end
     end
 

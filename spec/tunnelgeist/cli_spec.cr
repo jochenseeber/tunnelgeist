@@ -1,4 +1,3 @@
-require "json"
 require "../spec_helper"
 require "../../src/tunnelgeist/cli"
 require "./support/temporary_directory"
@@ -31,27 +30,6 @@ describe TunnelgeistCLI do
       true
     rescue Socket::ConnectError
       false
-    end
-
-    # Writes a configuration with *socket*, *group* and one client that
-    # restricts nothing to `config.json` in *directory*, mode 0644, and
-    # returns its path.
-    def write_config(directory : String, *, socket : String, group : String) : String
-      content = JSON.build do |json|
-        json.object do
-          json.field "socket", socket
-          json.field "group", group
-          json.field "clients" do
-            json.array do
-              json.object { json.field "name", "default" }
-            end
-          end
-        end
-      end
-      path = File.join(directory, "config.json")
-      File.write(path, content)
-      File.chmod(path, 0o644)
-      path
     end
 
     # `F_DUPFD` of fcntl.h, which the standard library does not declare.
@@ -220,17 +198,6 @@ describe TunnelgeistCLI do
       assert(result.error.includes?("unknown command \"start\""))
     end
 
-    test "serve with a configuration file that does not exist fails with the error" do
-      with_temporary_directory do |directory|
-        path = File.join(directory, "config.json")
-        result = run("serve", "--config", path)
-
-        assert(result.status == 1)
-        assert(result.error == "tunnelgeist: #{path}: does not exist\n")
-        assert(result.output.empty?)
-      end
-    end
-
     test "serve with an unknown option or an extra argument is a usage error" do
       assert(run("serve", "--config", "c", "--bogus").status == 2)
       assert(run("serve", "--config", "c", "extra").status == 2)
@@ -265,19 +232,6 @@ describe TunnelgeistCLI do
       assert(joined.error.includes?("--group must be a group name, got \"-x\""))
       assert(separate.status == 2)
       assert(separate.error.includes?("--group must be a group name, got \"-o\""))
-    end
-
-    test "serve with a configured socket path too long to bind fails at start as a configuration error" do
-      with_temporary_directory do |directory|
-        path = File.join(directory, "s" * 120 + ".sock")
-        # The socket is checked before the group, which no lookup reaches.
-        config = write_config(directory, socket: path, group: "tg")
-        result = run("serve", "--config", config)
-
-        assert(result.status == 1)
-        assert(result.error == "tunnelgeist: #{config}: field socket: Path size exceeds the maximum size of 103 bytes\n")
-        assert(!result.error.includes?("--help"))
-      end
     end
 
     test "SocketPath.clear deletes a socket file nothing listens on" do

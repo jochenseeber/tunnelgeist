@@ -2,6 +2,7 @@ require "file_utils"
 require "../spec_helper"
 require "../../src/tunnelgeist/config"
 require "../../src/tunnelgeist/config/loader"
+require "./support/fake_directory"
 require "./support/fake_membership"
 require "./support/temporary_directory"
 
@@ -27,16 +28,18 @@ describe ExampleConfigs do
     end
 
     # Loads *path* with the real signature requirements, owned by the owner
-    # of its directory. Every group resolves to a stand-in for `staff`; the
-    # names asked for are kept in *groups*. The examples name their users
-    # by uid, so the user lookup is never asked.
+    # of its directory, through a `TunnelgeistFakeDirectory`. Every group
+    # resolves to a stand-in for `staff`; the names asked for are kept in
+    # *groups*. The examples name their users by uid, so the user lookup is
+    # never asked.
     def load(path : String, *, groups : Array(String)) : Tunnelgeist::Config
       Tunnelgeist::Config::Loader.new(path: path, owner: File.info(File.dirname(path)).owner_id.to_u32,
         find_user: ->(name : String) : UInt32? { raise "the examples name the user #{name}, not a uid" },
         build_membership: ->(name : String) do
           groups << name
           TunnelgeistFakeMembership.new("staff", gid: 20_u32, members: [] of UInt32).as(Tunnelgeist::Membership)
-        end).load
+        end,
+        open_directory: TunnelgeistFakeDirectory.opener).load
     end
 
     test "the example configuration loads with the main file's client and both includes" do

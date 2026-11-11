@@ -3,9 +3,9 @@ require "system/user"
 require "../../test_helper"
 require "../../../src/tunnelgeist/config/error"
 require "../../../src/tunnelgeist/config/trusted_directory"
-require "../../../src/tunnelgeist/config/trusted_directory/missing"
+require "../../../src/tunnelgeist/config/directory/missing"
 require "../../../src/tunnelgeist/lib_system"
-require "../../../spec/tunnelgeist/support/trusted_temporary_directory"
+require "../support/trusted_temporary_directory"
 require "../support/temporary_directory"
 
 # The walk from `/` to a configuration file (RF5.1, RF5.3) over real files
@@ -149,8 +149,8 @@ describe Tunnelgeist::Config::TrustedDirectory do
         missing_file = File.join(directory, "config.json")
         missing_directory = File.join(directory, "d")
 
-        assert(raised(TrustedDirectory::Missing) { read(missing_file) }.message == "#{missing_file}: does not exist")
-        assert(raised(TrustedDirectory::Missing) { read(File.join(missing_directory, "config.json")) }.message ==
+        assert(raised(Config::Directory::Missing) { read(missing_file) }.message == "#{missing_file}: does not exist")
+        assert(raised(Config::Directory::Missing) { read(File.join(missing_directory, "config.json")) }.message ==
                "#{missing_directory}: does not exist")
       end
     end

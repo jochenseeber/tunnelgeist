@@ -7,12 +7,13 @@ require "c/unistd"
 require "../lib_system"
 require "./acl_entry"
 require "./acl_permissions"
+require "./directory"
+require "./directory/missing"
 require "./error"
 require "./file_status"
 require "./lib_acl"
 require "./lib_directory"
 require "./trust_policy"
-require "./trusted_directory/missing"
 require "./trusted_file"
 
 module Tunnelgeist
@@ -28,7 +29,7 @@ module Tunnelgeist
     # Every refusal is a `Config::Error` naming the path walked up to the
     # object that failed, `Missing` when it does not exist. *owner* is the
     # trusted user besides root: the owner every file must have.
-    class TrustedDirectory
+    class TrustedDirectory < Directory
       # Opens each directory of the walk: no symbolic link, nothing but a
       # directory.
       OPEN_DIRECTORY = LibC::O_RDONLY | LibDirectory::O_DIRECTORY | LibC::O_NOFOLLOW | LibC::O_CLOEXEC
@@ -46,10 +47,16 @@ module Tunnelgeist
       protected def initialize(@fd : Int32, *, @path : String, @owner : UInt32)
       end
 
+      # The directory reached from `/` through the plain names *names*,
+      # which the caller closes.
+      def self.open(names : Array(String), *, owner : UInt32) : TrustedDirectory
+        root(owner: owner).walk(names)
+      end
+
       # Runs the block with the directory reached from `/` through the plain
       # names *names* and closes it afterwards.
       def self.open(names : Array(String), *, owner : UInt32, &)
-        directory = root(owner: owner).walk(names)
+        directory = open(names, owner: owner)
         begin
           yield directory
         ensure
@@ -57,16 +64,9 @@ module Tunnelgeist
         end
       end
 
-      # Runs the block with the directory reached from this one through the
-      # plain names *names*, this one itself when there are none, and closes
-      # that afterwards; this one stays open.
-      def descend(names : Array(String), &)
-        directory = TrustedDirectory.new(duplicate, path: @path, owner: @owner).walk(names)
-        begin
-          yield directory
-        ensure
-          directory.close
-        end
+      # :inherit:
+      def open(names : Array(String)) : Directory
+        TrustedDirectory.new(duplicate, path: @path, owner: @owner).walk(names)
       end
 
       # The text of the file *name* in this directory: a regular file owned
@@ -122,7 +122,7 @@ module Tunnelgeist
       end
 
       # The path of *name* in this directory.
-      def path_of(name : String) : String
+      protected def path_of(name : String) : String
         @path == "/" ? "/#{name}" : "#{@path}/#{name}"
       end
 

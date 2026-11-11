@@ -43,30 +43,30 @@ The tests are written with microtest and come in three sets:
   pass fakes: a `Membership` that names its members
   (`support/fake_membership.cr`), a `Peer` built by hand
   (`support/fake_peer.cr`), the user, group and signature lookups of
-  `Config::Loader`, and the runners, paths and owner of `Install`. Files and
-  sockets a spec creates go into a fresh directory below the real path of
-  `$TMPDIR`, which `support/temporary_directory.cr` makes and removes. That
-  directory is the one thing a unit test takes from the system; `$TMPDIR` must
-  be short enough for a socket path in it (under 104 bytes), and the helper
-  says so when it is not. The configuration loader checks every directory from
-  `/` down to a file it reads, so the specs that load files also need a
-  `$TMPDIR` whose directories only root or you own and no one else may write,
-  with no ACL that lets anyone else write; macOS's own per-user `$TMPDIR` is
-  one, and `support/trusted_temporary_directory.cr` says which directory fails
-  when it is not.
+  `Config::Loader` and the directories it reads through
+  (`support/fake_directory.cr`), and the runners, paths and owner of `Install`.
+  Files and sockets a spec creates go into a fresh directory below the real
+  path of `$TMPDIR`, which `support/temporary_directory.cr` makes and removes.
+  That directory is the one thing a unit test takes from the system; `$TMPDIR`
+  must be short enough for a socket path in it (under 104 bytes), and the
+  helper says so when it is not. The fake directories of the loader apply the
+  configuration's ownership and mode rules to the directories and files below
+  the temporary directory only, so the directories above it do not matter.
 - The integration tests in `test/tunnelgeist/`, run by `rake test`, are the
   tests that need the system: the directory service (`staff`, `wheel`,
   `nogroup`), Security on the test binary, `plutil`, `git`, the programs
   `CommandRunner` runs, the kernel event socket, the peer address of a
   descriptor that is no utun device, a kernel control socket of another control
-  included, the default configuration path, the root-ness of the process, and
-  `install` as root, which checks every directory above the ones it writes in
-  up to `/` and so needs a `$TMPDIR` whose ancestors only root or you own and
-  no one else may write. macOS's own per-user `$TMPDIR` below
-  `/private/var/folders` is one; a `TMPDIR` below `/private/tmp`, which
-  everyone may write, is not. They mirror the layout of `spec/`;
-  `test/test_helper.cr` sets up microtest and `test/tunnelgeist/support/` holds
-  their helpers. They run as you and change nothing on the system.
+  included, the default configuration path, the root-ness of the process, ACLs,
+  the configuration loader, which checks every directory from `/` down to a
+  file it reads, and `install` as root, which checks every directory above the
+  ones it writes in up to `/`. Both need a `$TMPDIR` whose ancestors only root
+  or you own and no one else may write, with no ACL that lets anyone else
+  write. macOS's own per-user `$TMPDIR` below `/private/var/folders` is one; a
+  `TMPDIR` below `/private/tmp`, which everyone may write, is not. They mirror
+  the layout of `spec/`; `test/test_helper.cr` sets up microtest and
+  `test/tunnelgeist/support/` holds their helpers. They run as you and change
+  nothing on the system.
 - The daemon tests in `test/daemon/`, run by `rake test:daemon` and by nothing
   else. A `Tunnelgeist::Client` asks a real daemon for utun devices, and the
   tests read the ICMP echo request of `ping -c1 -t2 10.77.3.2` from
@@ -220,24 +220,26 @@ the daemon needs, and no library file requires any of these:
   files' shape that the loader reads them into, `config/syntax_check` checks a
   file's JSON syntax and refuses a key given twice before that,
   `config/field_path` builds the field paths errors name, `config/location` is
-  the line and column of an error the JSON reader found,
-  `config/trusted_directory` opens and reads each file through checked
-  directory descriptors from `/` down (with `trusted_directory/missing`, its
-  error for a name that does not exist, and its bindings in
-  `config/lib_directory` and `config/lib_acl`), `config/trust_policy` decides
-  what passes from a `config/file_status` and the `config/acl_entry`s with
-  their `config/acl_permissions`, and `config/trusted_file` is the text read
-  with its path, `config/client` and `config/address_rule` are one client
-  configuration and one of its address rules, `config/error` names the file and
-  field of a refused configuration, and `config/holder` keeps the configuration
-  in use and swaps it on `SIGHUP`. `authorizer` applies the group membership
-  and the client configurations, with their signature policies, to a peer:
-  `authorizer/admission` holds the configurations that apply and judges the
-  addresses and routes of a request, `authorizer/client_refusal` says why one
-  configuration did not apply, and `authorizer/denial` is a refused item with
-  the text of its error reply. Only `lib_bsm`, `lib_cf` and `lib_security` link
-  the BSM library, CoreFoundation and Security, so only the daemon does; a
-  program that uses the client or `Device` links none of them.
+  the line and column of an error the JSON reader found, `config/directory` is
+  a checked directory the loader reads each file through (with
+  `directory/missing`, its error for a name that does not exist), and
+  `config/trusted_directory` the one the daemon uses, which opens each
+  directory and file through checked descriptors from `/` down (with its
+  bindings in `config/lib_directory` and `config/lib_acl`),
+  `config/trust_policy` decides what passes from a `config/file_status` and the
+  `config/acl_entry`s with their `config/acl_permissions`, and
+  `config/trusted_file` is the text read with its path, `config/client` and
+  `config/address_rule` are one client configuration and one of its address
+  rules, `config/error` names the file and field of a refused configuration,
+  and `config/holder` keeps the configuration in use and swaps it on `SIGHUP`.
+  `authorizer` applies the group membership and the client configurations, with
+  their signature policies, to a peer: `authorizer/admission` holds the
+  configurations that apply and judges the addresses and routes of a request,
+  `authorizer/client_refusal` says why one configuration did not apply, and
+  `authorizer/denial` is a refused item with the text of its error reply. Only
+  `lib_bsm`, `lib_cf` and `lib_security` link the BSM library, CoreFoundation
+  and Security, so only the daemon does; a program that uses the client or
+  `Device` links none of them.
 
 `family` belongs to the library: `address`, `prefix` and `commands` require it.
 So does `decimal`, the check of ASCII digits that `interface_name`, `prefix`,
@@ -261,17 +263,19 @@ the handler, the server, the client and the configuration holder,
 `descriptor_sender.cr` sends several descriptors in one message,
 `registrations.cr` registers devices with a reservation, `server_runs.cr` runs
 a server in a fiber and asks it as a client, `temporary_directory.cr` makes the
-temporary directories, and `trusted_temporary_directory.cr` checks that the
-configuration loader accepts the directories down to one. A spec reads fixtures
-from the project itself, such as `examples/config` and `docs/protocol.md`, and
+temporary directories, and `fake_directory.cr` stands in for the checked
+directories the configuration loader reads through. A spec reads fixtures from
+the project itself, such as `examples/config` and `docs/protocol.md`, and
 writes only below its temporary directory.
 
 `test/test_helper.cr` does the same for the integration tests in
 `test/tunnelgeist/`, named `*_test.cr` after the spec of the same source file;
 `test/tunnelgeist/support/` holds their helpers: `own_peer.cr` reads this
-process as a peer, and `temporary_directory.cr` is the suite's own copy of the
-temporary directories. They may also use the spec helpers `client_configs.cr`,
-`registrations.cr`, `server_runs.cr` and `trusted_temporary_directory.cr`.
+process as a peer, `temporary_directory.cr` is the suite's own copy of the
+temporary directories, and `trusted_temporary_directory.cr` checks that the
+configuration loader accepts the directories down to one and says which
+directory fails when it does not. They may also use the spec helpers
+`client_configs.cr`, `registrations.cr` and `server_runs.cr`.
 `test/daemon/device_test.cr` holds the daemon tests.
 
 ## Releasing

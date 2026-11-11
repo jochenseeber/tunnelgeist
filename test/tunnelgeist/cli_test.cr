@@ -85,6 +85,30 @@ describe TunnelgeistCLI do
       assert(result.error == "tunnelgeist: #{Tunnelgeist::Config::DEFAULT_PATH}: does not exist\n")
     end
 
+    test "serve with a configuration file that does not exist fails with the error" do
+      with_temporary_directory do |directory|
+        path = File.join(directory, "config.json")
+        result = run("serve", "--config", path)
+
+        assert(result.status == 1)
+        assert(result.error == "tunnelgeist: #{path}: does not exist\n")
+        assert(result.output.empty?)
+      end
+    end
+
+    test "serve with a configured socket path too long to bind fails at start as a configuration error" do
+      with_temporary_directory do |directory|
+        path = File.join(directory, "s" * 120 + ".sock")
+        # The socket is checked before the group, which no lookup reaches.
+        config = write_config(directory, socket: path, group: "tg")
+        result = run("serve", "--config", config)
+
+        assert(result.status == 1)
+        assert(result.error == "tunnelgeist: #{config}: field socket: Path size exceeds the maximum size of 103 bytes\n")
+        assert(!result.error.includes?("--help"))
+      end
+    end
+
     test "serve with an unknown group in the configuration fails with the error" do
       with_temporary_directory do |directory|
         group = "tunnelgeist-no-such-group-#{Process.pid}"

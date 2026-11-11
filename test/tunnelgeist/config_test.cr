@@ -10,7 +10,7 @@ require "../../src/tunnelgeist/membership"
 require "../../src/tunnelgeist/signature_policy"
 require "../../src/tunnelgeist/signature_policy/inspection"
 require "./support/own_peer"
-require "../../spec/tunnelgeist/support/trusted_temporary_directory"
+require "./support/trusted_temporary_directory"
 require "./support/temporary_directory"
 
 # The configuration loader and the client configuration (CA1, CC2, CF4) with
