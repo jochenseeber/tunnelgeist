@@ -232,6 +232,17 @@ describe TunnelgeistConfig do
       end
     end
 
+    test "load refuses a main path or an include that ends in / when it names a file, as cat does" do
+      with_trusted_directory do |directory|
+        main = write(directory, name: "config.json", content: %({"socket": "/var/run/tg.sock", "group": "tg",
+          "includes": ["c.json/"]}))
+        write(directory, name: "c.json", content: %({"name": "c"}))
+
+        assert(raised(Config::Error) { staff_loader("#{main}/").load }.message == "#{main}: must be a directory")
+        assert(raised(Config::Error) { staff_loader(main).load }.message == "#{directory}/c.json: must be a directory")
+      end
+    end
+
     test "load refuses a main file over 1 MiB" do
       with_trusted_directory do |directory|
         main = write(directory, name: "config.json", content: " " * 1_048_577)

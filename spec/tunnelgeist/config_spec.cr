@@ -581,6 +581,44 @@ describe TunnelgeistConfig do
       end
     end
 
+    test "load refuses a main path that ends in / or /. as a directory, as the system does" do
+      with_fixture do |fixture|
+        fixture.write("config.json", content: main_json)
+
+        ["#{fixture.main}/", "#{fixture.main}/."].each do |path|
+          error = raised(Config::Error) { Lookups.new.loader(path, owner: fixture.owner).load }
+
+          assert(error.message == "#{fixture.main}: must be a directory")
+        end
+        ["#{fixture.directory}/", "#{fixture.directory}/."].each do |path|
+          error = raised(Config::Error) { Lookups.new.loader(path, owner: fixture.owner).load }
+
+          assert(error.message == "#{fixture.directory}: must be a regular file")
+        end
+      end
+    end
+
+    test "load refuses an include that ends in / or /. as a directory, as the system does" do
+      # %s stands for the fixture's directory, %m for its main file, each at most once.
+      {"c.json/"     => "%s/c.json: must be a directory",
+       "c.json/."    => "%s/c.json: must be a directory",
+       "/%s/c.json/" => "%s/c.json: must be a directory",
+       "d/"          => "%m: field includes[0]: must name a file",
+       "d/*.json/"   => "%m: field includes[0]: must name a file",
+       "x/"          => "%m: field includes[0]: file %s/x does not exist"}.each do |entry, expected|
+        with_fixture do |fixture|
+          fixture.write("c.json", content: %({"name": "c"}))
+          fixture.write("d/a.json", content: %({"name": "a"}))
+          listed = entry.sub("/%s", fixture.directory)
+          fixture.write("config.json", content: main_json(extra: %(, "includes": [#{listed.to_json}])))
+
+          error = load_error(fixture)
+
+          assert(error.message == expected.sub("%s", fixture.directory).sub("%m", fixture.main))
+        end
+      end
+    end
+
     test "load refuses an include with a NUL byte" do
       ["a\\u0000b.json", "c\\u0000/*.json"].each do |entry|
         with_fixture do |fixture|

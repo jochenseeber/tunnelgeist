@@ -147,10 +147,11 @@ directory. Only the last path component may hold the glob characters `*`, `?`
 and `[`; a glob's files are read in name order, a name starting with `.`
 matches only a pattern that starts with `.`, and a glob that matches nothing,
 or whose directory does not exist, is not an error. A path without glob
-characters must exist. An absolute entry is opened from `/`. An entry with a
-`..` component is refused, and so is a main path with one: the daemon opens
-each file by going down from a checked directory, never up (see
-[Ownership](#ownership)).
+characters must exist. An absolute entry is opened from `/`. An entry or a main
+path that ends in `/` names a directory, as it does for any program, and is
+refused. An entry with a `..` component is refused, and so is a main path with
+one: the daemon opens each file by going down from a checked directory, never
+up (see [Ownership](#ownership)).
 
 ## Ownership
 

@@ -98,6 +98,12 @@ module Tunnelgeist
         String.new(buffer.to_unsafe)
       end
 
+      # Whether *path* names a directory only: it ends in `/` or `/.`, which
+      # the system resolves only when the last name is a directory.
+      protected def self.directory_form?(path : String) : Bool
+        path.ends_with?('/') || path.ends_with?("/.") || path == "."
+      end
+
       # The components of *path*, without empty and `.` ones.
       protected def self.names(path : String) : Array(String)
         path.split('/').reject! { |name| name.empty? || name == "." }
@@ -110,6 +116,12 @@ module Tunnelgeist
       def load : Config
         names = Loader.names(@file)
         raise Error.new(PARENT_COMPONENT, file: @file) if names.includes?("..")
+        if Loader.directory_form?(@path)
+          # As the system does, this opens the last name as a directory,
+          # which a file is not.
+          opening(names) { }
+          raise Error.new("must be a regular file", file: @file)
+        end
         name = names.pop? || raise Error.new("must be a regular file", file: @file)
 
         opening(names) do |directory|
@@ -262,11 +274,13 @@ module Tunnelgeist
         end
 
         begin
-          if entry.starts_with?('/')
-            opening(names) { |parent| read_entry(parent, name: last) }
-          else
-            directory.descend(names) { |parent| read_entry(parent, name: last) }
+          if Loader.directory_form?(entry)
+            # Opened as a directory, as the system does, which a file is
+            # not.
+            within(names + [last], absolute: entry.starts_with?('/'), directory: directory) { } unless glob?(last)
+            raise Error.new("must name a file", file: @file, field: field)
           end
+          within(names, absolute: entry.starts_with?('/'), directory: directory) { |parent| read_entry(parent, name: last) }
         rescue error : Directory::Missing
           # A glob in a directory that is not there matches nothing.
           raise Error.new("file #{included_path(entry, directory: directory)} does not exist", file: @file,
@@ -275,6 +289,16 @@ module Tunnelgeist
         end
       rescue error : ArgumentError
         raise Error.new(error.message.to_s, file: @file, field: field, cause: error)
+      end
+
+      # Runs the block with the directory reached through *names* from `/`
+      # when *absolute*, else from the main file's *directory*.
+      private def within(names : Array(String), *, absolute : Bool, directory : Directory, &)
+        if absolute
+          opening(names) { |parent| yield parent }
+        else
+          directory.descend(names) { |parent| yield parent }
+        end
       end
 
       # The file *name* in *parent*, or the files there whose names match
