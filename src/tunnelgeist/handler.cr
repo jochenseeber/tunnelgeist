@@ -238,13 +238,16 @@ module Tunnelgeist
     # Changes an address or route of a registered device (UP3). First pins
     # the device with the descriptor that came with *line*, which must be
     # the device's own (RF1.2); any other raises `Protocol::Error` before
-    # the registry is asked. Then, under the registry mutex: checks the
-    # interface index (UA6, RF1.5), judges the item by *admission* (CA3),
-    # validates the change against the entry, runs the command and only
-    # then records it. The descriptor is closed once that is done, on every
-    # path, and before the reply (RF1.3). A rejection or denial becomes an
-    # error reply and a log line like any failure; a denial's line names the
-    # configurations that applied.
+    # the registry is asked. Then, holding the device's entry (RF1.6):
+    # checks the interface index (UA6, RF1.5), judges the item by
+    # *admission* (CA3), validates the change against the entry, runs the
+    # command and only then records it. A departure that removes the entry
+    # while the command runs does not wait for it; the change is then not
+    # recorded and the reply is `unknown device`, as for a change that came
+    # after the departure. The descriptor is closed once that is done, on
+    # every path, and before the reply (RF1.3). A rejection or denial
+    # becomes an error reply and a log line like any failure; a denial's
+    # line names the configurations that applied.
     private def change(socket : UNIXSocket, *, peer : Peer, admission : Authorizer::Admission,
                        request : Protocol::DeviceRequest, line : RequestLine) : Nil
       refused = begin
@@ -252,7 +255,7 @@ module Tunnelgeist
         @registry.with_entry(request.name) do |entry|
           index = @interface_index.call(entry.name)
           if index == 0 || index != entry.index
-            @registry.remove(entry.name)
+            @registry.remove(entry)
             @log.info { "#{describe_peer(peer)} op=#{request.operation.wire} name=#{entry.name} removed: interface index #{entry.index} now #{index}" }
             Registry::Rejection.unknown_device
           else
@@ -289,7 +292,9 @@ module Tunnelgeist
 
     # Checks the change of *request* against *admission* and *entry*, runs
     # its command and records it; returns the denial or the rejection
-    # instead, before any command runs, when either refuses it.
+    # instead, before any command runs, when either refuses it, and the
+    # rejection of an unknown device when the entry was removed while the
+    # command ran.
     private def apply(*, peer : Peer, admission : Authorizer::Admission, entry : Registry::Entry,
                       request : Protocol::DeviceRequest) : (Registry::Rejection | Authorizer::Denial)?
       name = entry.name

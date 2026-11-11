@@ -1,10 +1,13 @@
 require "../spec_helper"
 require "../../src/tunnelgeist/registry"
+require "./support/prompt_calls"
 
 # The registry of the devices the helper created (UA6, UP3 to UP5).
 describe TunnelgeistRegistry do
   {% if flag?(:darwin) %}
     alias Protocol = Tunnelgeist::Protocol
+
+    include TunnelgeistPromptCalls
 
     def v4(last : Int32 = 1) : Tunnelgeist::Address
       Tunnelgeist::Address.new(
@@ -136,6 +139,88 @@ describe TunnelgeistRegistry do
       end
 
       assert(refusal(registry.with_entry(ifname("utun7")) { }) == Protocol::UNKNOWN_DEVICE)
+    end
+
+    test "while a block holds one entry, the registry serves every other call at once" do
+      registry = Tunnelgeist::Registry.new
+      empty_addresses = [] of Tunnelgeist::Address
+      empty_routes = [] of Tunnelgeist::Prefix
+      registry.register(ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
+      registry.register(ifname("utun8"), index: 13_u32, addresses: empty_addresses, routes: empty_routes) { }
+
+      within_entry(registry, name: ifname("utun7")) do
+        assert(promptly { registry.with_entry(ifname("utun8"), &.index) } == 13_u32)
+        promptly { registry.register(ifname("utun9"), index: 14_u32, addresses: empty_addresses, routes: empty_routes) { } }
+        assert(promptly { registry.remove(ifname("utun8")) })
+        assert(!promptly { registry.empty? })
+      end
+
+      assert(registry.with_entry(ifname("utun9"), &.index) == 14_u32)
+    end
+
+    test "a removal of an entry a block holds returns at once and the entry records nothing more" do
+      registry = Tunnelgeist::Registry.new
+      registry.register(ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [route("10.99.0.0/16")]) { }
+
+      within_entry(registry, name: ifname("utun7")) do |entry|
+        assert(promptly { registry.remove(ifname("utun7")) })
+
+        assert(refusal(entry.add_address(v4(2))) == Protocol::UNKNOWN_DEVICE)
+        assert(refusal(entry.remove_address(v4(1))) == Protocol::UNKNOWN_DEVICE)
+        assert(refusal(entry.add_route(route("10.98.0.0/16"))) == Protocol::UNKNOWN_DEVICE)
+        assert(refusal(entry.remove_route(route("10.99.0.0/16"))) == Protocol::UNKNOWN_DEVICE)
+        assert(recorded?(entry, address: v4(1)))
+        assert(!recorded?(entry, address: v4(2)))
+        assert(recorded?(entry, route: route("10.99.0.0/16")))
+        assert(!recorded?(entry, route: route("10.98.0.0/16")))
+      end
+      assert(registry.empty?)
+    end
+
+    test "with_entry yields nothing when the entry is removed while it waits for the entry" do
+      registry = Tunnelgeist::Registry.new
+      registry.register(ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      yielded = false
+      waiter = Channel(Tunnelgeist::Registry::Rejection | Bool | Exception).new(1)
+
+      within_entry(registry, name: ifname("utun7")) do
+        waiter = later { registry.with_entry(ifname("utun7")) { yielded = true } }
+        # Lets the waiter look the entry up and wait for it.
+        Fiber.yield
+        registry.remove(ifname("utun7"))
+      end
+
+      assert(awaited(waiter) == Tunnelgeist::Registry::Rejection.unknown_device)
+      assert(!yielded)
+    end
+
+    test "a stale entry that register replaces records nothing more" do
+      registry = Tunnelgeist::Registry.new
+      empty_addresses = [] of Tunnelgeist::Address
+      empty_routes = [] of Tunnelgeist::Prefix
+      registry.register(ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
+      stale = registry.with_entry(ifname("utun7"), &.itself).as(Tunnelgeist::Registry::Entry)
+
+      registry.register(ifname("utun7"), index: 13_u32, addresses: empty_addresses, routes: empty_routes) { }
+
+      assert(refusal(stale.add_route(route("10.98.0.0/16"))) == Protocol::UNKNOWN_DEVICE)
+      assert(registry.with_entry(ifname("utun7")) { |entry| recorded?(entry, route: route("10.98.0.0/16")) } == false)
+    end
+
+    test "remove of an entry forgets it only while it is the registered entry of its name" do
+      registry = Tunnelgeist::Registry.new
+      empty_addresses = [] of Tunnelgeist::Address
+      empty_routes = [] of Tunnelgeist::Prefix
+      registry.register(ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
+      stale = registry.with_entry(ifname("utun7"), &.itself).as(Tunnelgeist::Registry::Entry)
+      registry.register(ifname("utun7"), index: 13_u32, addresses: empty_addresses, routes: empty_routes) { }
+      current = registry.with_entry(ifname("utun7"), &.itself).as(Tunnelgeist::Registry::Entry)
+
+      assert(!registry.remove(stale))
+      assert(registry.with_entry(ifname("utun7"), &.index) == 13_u32)
+      assert(registry.remove(current))
+      assert(registry.empty?)
+      assert(refusal(current.add_route(route("10.98.0.0/16"))) == Protocol::UNKNOWN_DEVICE)
     end
 
     test "remove forgets the entry" do

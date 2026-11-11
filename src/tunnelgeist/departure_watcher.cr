@@ -15,7 +15,9 @@ module Tunnelgeist
   # still alive, and keeping the entry would fail open. When a new `create`
   # took the name before the event was read, that device loses its entry,
   # and its client's next change gets `unknown device` and must create a
-  # device again.
+  # device again. A removal does not wait for a change of the device that
+  # is under way: the registry marks the entry removed, and that change
+  # records nothing.
   #
   # The design names the routing socket's `RTM_IFANNOUNCE` message, but that
   # is FreeBSD's: macOS declares neither it nor `struct if_announcemsghdr`

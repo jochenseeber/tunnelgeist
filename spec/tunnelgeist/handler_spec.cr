@@ -2,6 +2,7 @@ require "../spec_helper"
 require "../../src/tunnelgeist/handler"
 require "./support/client_configs"
 require "./support/descriptor_sender"
+require "./support/prompt_calls"
 
 # The request handler of the root helper (UA5, UP1 to UP7), with every
 # collaborator replaced: the device creator, the command runner, the
@@ -18,6 +19,7 @@ describe TunnelgeistHandler do
 
     include TunnelgeistClientConfigs
     include TunnelgeistDescriptorSender
+    include TunnelgeistPromptCalls
 
     REFUSAL = "not permitted: not in group tunnelgeist or not allowed by a client configuration"
     UTUN9   = Tunnelgeist::InterfaceName.new("utun9")
@@ -78,8 +80,9 @@ describe TunnelgeistHandler do
       getter verified = [] of Int32
       # What the fake name lookup raises for every descriptor, when set.
       property lookup_error : IO::Error? = nil
-      # Runs inside the fake command runner, before the command's result.
-      property on_run : Proc(Nil)? = nil
+      # Runs inside the fake command runner with the command, before its
+      # result.
+      property on_run : Proc(Array(String), Nil)? = nil
       # The interface names of the fake devices, by the inode of the client's
       # end.
       @device_names = {} of UInt64 => Tunnelgeist::InterfaceName
@@ -164,7 +167,7 @@ describe TunnelgeistHandler do
 
       def run(argv : Array(String)) : Tunnelgeist::CommandRunner::Result
         @commands << argv
-        @on_run.try &.call
+        @on_run.try &.call(argv)
         if argv[0] == Commands::ROUTE && argv[2] == "get"
           output = @route_get
           reply = output ? result(0, output: output, error: "") : result(1, output: "", error: "route: writing to routing socket: not in table\n")
@@ -262,12 +265,14 @@ describe TunnelgeistHandler do
       end
     end
 
-    # Whether the entry of utun9 has recorded *item*: it may be removed and
+    # Whether the entry of *name* has recorded *item*: it may be removed and
     # may not be added again. `Entry` keeps its arrays to itself, so its
     # checks are what shows them. Raises when the registry does not know
-    # utun9, so a missing entry cannot pass for an item that is not recorded.
-    def recorded?(fixture : HandlerFixture, *, item : Tunnelgeist::Address | Tunnelgeist::Prefix) : Bool
-      result = fixture.registry.with_entry(UTUN9) do |entry|
+    # *name*, so a missing entry cannot pass for an item that is not
+    # recorded.
+    def recorded?(fixture : HandlerFixture, *, item : Tunnelgeist::Address | Tunnelgeist::Prefix,
+                  name : Tunnelgeist::InterfaceName = UTUN9) : Bool
+      result = fixture.registry.with_entry(name) do |entry|
         case item
         in Tunnelgeist::Address
           entry.check_remove_address(item).nil? && !entry.check_add_address(item).nil?
@@ -275,7 +280,7 @@ describe TunnelgeistHandler do
           entry.check_remove_route(item).nil? && !entry.check_add_route(item).nil?
         end
       end
-      raise "the registry does not know utun9" if result.is_a?(Tunnelgeist::Registry::Rejection)
+      raise "the registry does not know #{name}" if result.is_a?(Tunnelgeist::Registry::Rejection)
 
       result
     end
@@ -661,7 +666,7 @@ describe TunnelgeistHandler do
       register(fixture)
       device = fixture.fake_device(UTUN9)
       held = [] of Bool
-      fixture.on_run = -> { held << !device.closed_everywhere?; nil }
+      fixture.on_run = ->(_argv : Array(String)) { held << !device.closed_everywhere?; nil }
       begin
         request = line(Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16")))
         reply = exchange(fixture, request: request, fds: [device.fd]) { device.client.close }.reply
@@ -683,6 +688,127 @@ describe TunnelgeistHandler do
 
       assert(reply.error == Protocol::UNKNOWN_DEVICE)
       assert(fixture.verified.size == 1)
+    end
+
+    # Makes every command that names utun9 wait until *gate* gets a value;
+    # *started* receives each such command as it starts waiting.
+    def hold_utun9_commands(fixture : HandlerFixture, *, gate : Channel(Nil), started : Channel(Array(String))) : Nil
+      fixture.on_run = ->(argv : Array(String)) do
+        if argv.includes?(UTUN9.to_s)
+          started.send(argv)
+          gate.receive
+        end
+        nil
+      end
+    end
+
+    # Registers utun9 and utun8 and starts adding the route 10.98.0.0/16 to
+    # utun9, whose command waits until *gate* gets a value; returns once that
+    # command runs, with the channel that receives the reply.
+    def start_held_change(fixture : HandlerFixture, *, gate : Channel(Nil)) : Channel(Protocol::Reply | Exception)
+      register(fixture)
+      fixture.registry.register(UTUN8, index: 22_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      fixture.indexes[UTUN8] = 22_u32
+      started = Channel(Array(String)).new(4)
+      hold_utun9_commands(fixture, gate: gate, started: started)
+      held = later { change(fixture, Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16"))) }
+      assert(promptly { started.receive } == Commands.add_route(route("10.98.0.0/16"), name: UTUN9))
+      held
+    end
+
+    test "a change waiting for its command does not hold up a change of another device" do
+      fixture = HandlerFixture.new
+      gate = Channel(Nil).new
+      held = start_held_change(fixture, gate: gate)
+
+      other = promptly { change(fixture, Protocol::AddRoute.new(name: UTUN8, route: route("10.97.0.0/16"))) }
+
+      assert(other.ok)
+      assert(recorded?(fixture, item: route("10.97.0.0/16"), name: UTUN8))
+      gate.send(nil)
+      assert(awaited(held).ok)
+      assert(recorded?(fixture, item: route("10.98.0.0/16")))
+    end
+
+    test "a change waiting for its command does not hold up a create" do
+      fixture = HandlerFixture.new
+      gate = Channel(Nil).new
+      held = start_held_change(fixture, gate: gate)
+      utun7 = Tunnelgeist::InterfaceName.new("utun7")
+      fixture.indexes[utun7] = 23_u32
+      request = Protocol::Create.new(name: utun7, mtu: 1_280, addresses: [] of Tunnelgeist::Address, routes: [route("10.97.0.0/16")])
+
+      created = promptly { exchange(fixture, request: line(request)) }
+      created.fd.try { |fd| LibC.close(fd) }
+
+      assert(created.reply.ok)
+      assert(recorded?(fixture, item: route("10.97.0.0/16"), name: utun7))
+      gate.send(nil)
+      assert(awaited(held).ok)
+    end
+
+    test "a change waiting for its command does not hold up the departure of another device or the idle check" do
+      fixture = HandlerFixture.new
+      gate = Channel(Nil).new
+      held = start_held_change(fixture, gate: gate)
+
+      assert(promptly { fixture.registry.remove(UTUN8) })
+      assert(!promptly { fixture.registry.empty? })
+
+      gate.send(nil)
+      assert(awaited(held).ok)
+      assert(recorded?(fixture, item: route("10.98.0.0/16")))
+    end
+
+    test "the departure of a device whose change waits for its command returns at once and the change records nothing" do
+      fixture = HandlerFixture.new
+      gate = Channel(Nil).new
+      held = start_held_change(fixture, gate: gate)
+
+      assert(promptly { fixture.registry.remove(UTUN9) })
+      gate.send(nil)
+      reply = awaited(held)
+
+      assert(reply.error == Protocol::UNKNOWN_DEVICE)
+      assert(fixture.logged?("op=add_route name=utun9 failed: unknown device"))
+      assert(fixture.registry.with_entry(UTUN9) { } == Tunnelgeist::Registry::Rejection.unknown_device)
+    end
+
+    test "a change whose entry a create replaced while its command ran records nothing in the new entry" do
+      fixture = HandlerFixture.new
+      gate = Channel(Nil).new
+      held = start_held_change(fixture, gate: gate)
+
+      promptly { fixture.registry.register(UTUN9, index: 24_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { } }
+      gate.send(nil)
+      reply = awaited(held)
+
+      assert(reply.error == Protocol::UNKNOWN_DEVICE)
+      assert(fixture.registry.with_entry(UTUN9, &.index) == 24_u32)
+      assert(!recorded?(fixture, item: route("10.98.0.0/16")))
+    end
+
+    test "a change waiting for the entry of a device that departs runs no command and gets UNKNOWN_DEVICE" do
+      fixture = HandlerFixture.new
+      gate = Channel(Nil).new
+      held = start_held_change(fixture, gate: gate)
+      waiting = later { change(fixture, Protocol::AddRoute.new(name: UTUN9, route: route("10.97.0.0/16"))) }
+      # The second change has pinned its descriptor once the name lookup saw
+      # it, and then waits for the entry the first one holds.
+      promptly do
+        until fixture.verified.size == 2
+          sleep 1.millisecond
+        end
+      end
+      Fiber.yield
+
+      assert(fixture.commands.size == 1)
+      assert(promptly { fixture.registry.remove(UTUN9) })
+      gate.send(nil)
+
+      assert(awaited(held).error == Protocol::UNKNOWN_DEVICE)
+      assert(awaited(waiting).error == Protocol::UNKNOWN_DEVICE)
+      assert(fixture.commands.size == 1)
     end
 
     test "a descriptor sent with a create is closed and the create goes on" do

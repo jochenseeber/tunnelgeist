@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/tunnelgeist/departure_watcher"
+require "./support/prompt_calls"
 
 # The departure watcher of UA5 and UA6: it reads kernel events and names the
 # interface of a data link detach. The specs feed it events through a pipe;
@@ -7,6 +8,8 @@ require "../../src/tunnelgeist/departure_watcher"
 describe TunnelgeistDepartureWatcher do
   {% if flag?(:darwin) %}
     alias DepartureWatcher = Tunnelgeist::DepartureWatcher
+
+    include TunnelgeistPromptCalls
 
     # A `kern_event_msg` (sys/kern_event.h) carrying a `net_event_data`
     # (net/if_var.h), in host byte order.
@@ -145,6 +148,30 @@ describe TunnelgeistDepartureWatcher do
       sleep 20.milliseconds
       fixture.writer.write(event(DepartureWatcher::LibKernelEvent::KEV_DL_IF_DETACHED, unit: 8_u32))
       eventually { unknown?(fixture, name: Tunnelgeist::InterfaceName.new("utun8")) }
+    end
+
+    test "the departure of a device whose change is under way returns at once" do
+      with_pipe_watcher do |fixture|
+        utun7 = Tunnelgeist::InterfaceName.new("utun7")
+        entry(fixture, name: utun7, index: 30_u32)
+        holding = Channel(Nil).new(1)
+        gate = Channel(Nil).new
+        change = later do
+          fixture.registry.with_entry(utun7) do
+            holding.send(nil)
+            gate.receive
+          end
+        end
+        promptly { holding.receive }
+
+        fixture.writer.write(event(DepartureWatcher::LibKernelEvent::KEV_DL_IF_DETACHED, unit: 7_u32))
+        promptly { fixture.watcher.drain }
+
+        assert(unknown?(fixture, name: utun7))
+        assert(removals(fixture, name: "utun7") == 1)
+        gate.send(nil)
+        awaited(change)
+      end
     end
 
     test "start makes the event source non-blocking and drain on an empty source returns at once" do
