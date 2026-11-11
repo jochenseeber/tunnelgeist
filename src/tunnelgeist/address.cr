@@ -39,6 +39,14 @@ module Tunnelgeist
       @peer || raise NilAssertionError.new("an IPv6 address has no peer")
     end
 
+    # Whether *other* has the same local address, in whatever prefix length or
+    # peer. The kernel keeps one alias per family and local address on a
+    # device, so this is the identity of an alias there. `Socket::IPAddress`
+    # holds the address normalized, so `FD77::0:1` equals `fd77::1`.
+    def same_local?(other : Address) : Bool
+      @address == other.address
+    end
+
     # Whether the address is IPv4 or IPv6, which decides the `ifconfig` keyword
     # and the prefix limit.
     def family : Socket::Family

@@ -340,6 +340,15 @@ describe Tunnelgeist::Protocol do
       assert(parse_error(line) == "The peer fd77::1 is not an IPv4 address")
     end
 
+    test "rejects a create that lists one local address twice" do
+      twice = %([{"address": "10.77.0.2", "prefix": 24, "peer": "10.77.0.1"}, {"address": "10.77.0.2", "prefix": 25, "peer": "10.77.0.9"}])
+      error = raised(Protocol::Error) { Protocol::Request.parse(create_json(addresses: twice)) }
+      assert(error.message == "address 10.77.0.2 listed twice")
+      assert(error.field! == "addresses")
+      v6 = %([{"address": "fd77::1", "prefix": 64}, {"address": "FD77::0:1", "prefix": 48}])
+      assert(parse_error(create_json(addresses: v6)) == "address fd77::1 listed twice")
+    end
+
     test "rejects more than 16 addresses or 64 routes in a create" do
       addresses = (1..17).map { |i| %({"address": "fd77::#{i}", "prefix": 64}) }.join(",")
       assert(parse_error(create_json(addresses: "[#{addresses}]")) == "too many addresses: 17, at most 16")

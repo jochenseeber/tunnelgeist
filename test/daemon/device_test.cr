@@ -84,6 +84,23 @@ describe TunnelgeistDaemon do
       assert(utun_interfaces == before)
     end
 
+    test "the daemon identifies an alias by its local address and removes it by the exact record" do
+      device = create_device(addresses: [] of Tunnelgeist::Address)
+      first = test_address
+      same_local = Tunnelgeist::Address.new(
+        Socket::IPAddress.new("10.77.3.1", 0), prefix: 25, peer: Socket::IPAddress.new("10.77.3.2", 0))
+
+      device.add_address(first)
+      assert(address?("10.77.3.1", name: device.name))
+
+      error = raised(Tunnelgeist::Client::Error) { device.add_address(same_local) }
+      assert(error.reason.refused?)
+      assert(error.message == "address 10.77.3.1 already on #{device.name}")
+
+      device.remove_address(first)
+      assert(!address?("10.77.3.1", name: device.name))
+    end
+
     test "the daemon refuses a route outside its configuration and creates no device" do
       before = utun_interfaces
 
@@ -163,6 +180,13 @@ describe TunnelgeistDaemon do
       output = IO::Memory.new
       Process.run("/sbin/route", ["-n", "get", destination], output: output, error: output)
       output.to_s
+    end
+
+    # Whether `ifconfig` lists *address* on the interface *name*.
+    def address?(address : String, *, name : Tunnelgeist::InterfaceName) : Bool
+      output = IO::Memory.new
+      Process.run("/sbin/ifconfig", [name.to_s], output: output, error: output)
+      output.to_s.split.includes?(address)
     end
 
     # The names of the utun interfaces the kernel has, from `ifconfig -l`, so

@@ -19,9 +19,16 @@ module Tunnelgeist
       # The bearer key of the device.
       getter key : Key
 
-      # Copies *addresses* and *routes*.
+      # Copies *addresses* and *routes*. Raises `ArgumentError` when two of
+      # *addresses* have one local address: the kernel keeps one alias per
+      # local address, so the entry could not tell them apart.
       def initialize(*, @name : InterfaceName, @index : UInt32, @key : Key,
                      addresses : Array(Address), routes : Array(Prefix))
+        addresses.each_with_index do |address, index|
+          if addresses.first(index).any?(&.same_local?(address))
+            raise ArgumentError.new("address #{address.address.address} listed twice")
+          end
+        end
         @addresses = addresses.dup
         @routes = routes.dup
       end
@@ -38,11 +45,12 @@ module Tunnelgeist
         inspect(io)
       end
 
-      # Why *address* cannot be added: the device has it or would exceed
+      # Why *address* cannot be added: the device has an alias with its local
+      # address, whatever the prefix or peer, or would exceed
       # `MAX_ADDRESSES`; nil when it can. Changes nothing, so the handler can
       # check before it runs the command.
       def check_add_address(address : Address) : Rejection?
-        if @addresses.includes?(address)
+        if @addresses.any?(&.same_local?(address))
           Rejection.new(message: "address #{address.address.address} already on #{name}", field: "address")
         elsif @addresses.size >= Protocol::MAX_ADDRESSES
           Rejection.new(message: "#{name} would have more than #{Protocol::MAX_ADDRESSES} addresses", field: "address")

@@ -54,9 +54,14 @@ module Tunnelgeist
       def_equals name, mtu, addresses, routes
 
       # The converters check the number of addresses and routes; the MTU
-      # range is checked here.
+      # range and the uniqueness of the local addresses are checked here.
       protected def after_initialize : Nil
         super
+        @addresses.each_with_index do |address, index|
+          if @addresses.first(index).any?(&.same_local?(address))
+            raise Error.new("address #{address.address.address} listed twice", field: "addresses")
+          end
+        end
         raise Error.new("mtu #{@mtu} outside #{MTU_RANGE}", field: "mtu") unless MTU_RANGE.includes?(@mtu)
       end
     end

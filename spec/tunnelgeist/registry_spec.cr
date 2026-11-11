@@ -207,6 +207,36 @@ describe TunnelgeistRegistry do
       end
     end
 
+    test "an address is identified by its local address, whatever its prefix or peer" do
+      registry = Tunnelgeist::Registry.new
+      key = registry.register(ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [] of Tunnelgeist::Prefix) { }
+      other_prefix = Tunnelgeist::Address.new(
+        Socket::IPAddress.new("10.77.0.1", 0), prefix: 25, peer: Socket::IPAddress.new("10.77.1.1", 0))
+      other_peer = Tunnelgeist::Address.new(
+        Socket::IPAddress.new("10.77.0.1", 0), prefix: 24, peer: Socket::IPAddress.new("10.77.1.9", 0))
+
+      within_entry(registry, name: ifname("utun7"), key: key) do |entry|
+        assert(refusal(entry.add_address(other_prefix)) == "address 10.77.0.1 already on utun7")
+        assert(refusal(entry.add_address(other_peer)) == "address 10.77.0.1 already on utun7")
+        assert(refusal(entry.add_address(v4(1))) == "address 10.77.0.1 already on utun7")
+        # Removal stays an exact match on the recorded alias.
+        assert(refusal(entry.remove_address(other_prefix)) == "address 10.77.0.1 was not added by the helper")
+        assert(entry.remove_address(v4(1)).nil?)
+        assert(entry.add_address(other_prefix).nil?)
+      end
+    end
+
+    test "register refuses addresses that share a local address" do
+      registry = Tunnelgeist::Registry.new
+      other_prefix = Tunnelgeist::Address.new(
+        Socket::IPAddress.new("10.77.0.1", 0), prefix: 25, peer: Socket::IPAddress.new("10.77.1.1", 0))
+
+      error = raised(ArgumentError) do
+        registry.register(ifname("utun7"), index: 12_u32, addresses: [v4(1), other_prefix], routes: [] of Tunnelgeist::Prefix) { }
+      end
+      assert(error.message == "address 10.77.0.1 listed twice")
+    end
+
     test "add_route and remove_route track what the helper added" do
       registry = Tunnelgeist::Registry.new
       key = registry.register(ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [route("10.99.0.0/16")]) { }
