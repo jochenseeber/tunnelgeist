@@ -166,11 +166,12 @@ checks each directory it opens before it opens the next name in it:
   daemon runs as (root under launchd), writable by neither its group nor
   others, and at most 1 MiB;
 - no directory and not the file may have an ACL entry that allows anyone but
-  its owner, a group included, to write, append, change its attributes,
-  extended attributes, permissions or owner, delete it, or, on a directory, add
-  a file or subdirectory or delete what it holds. An entry the object inherited
-  counts like its own; entries that deny, or that allow only reading or
-  listing, are fine.
+  its owner, a group included, more than reading: an entry may allow only
+  `read` (`list` on a directory), `execute` (`search`), `readattr`,
+  `readextattr`, `readsecurity` and `synchronize`. Anything else, such as
+  `write`, `append`, `delete`, `add_file` or `chown`, or a generic right, which
+  `ls -le` shows as an `allow` with no rights after it, is refused. An entry
+  the object inherited counts like its own; entries that deny are fine.
 
 The daemon reads the file from the descriptor it checked, so nothing swapped in
 along the path between the check and the read is read. A refused directory is

@@ -20,11 +20,11 @@ module Tunnelgeist
       TOO_LARGE = "must be at most 1 MiB (#{MAX_FILE_SIZE} bytes)"
       # Why an object whose ACL lets another principal change it is refused.
       ACL_WRITE = "grants write access through its ACL"
-      # The ACL permissions that change an object or, on a directory, what
-      # it holds.
-      ACL_WRITES = AclPermissions::WriteData | AclPermissions::AppendData | AclPermissions::WriteAttributes |
-                   AclPermissions::WriteExtattributes | AclPermissions::WriteSecurity | AclPermissions::ChangeOwner |
-                   AclPermissions::Delete | AclPermissions::DeleteChild
+      # The ACL permissions that only read an object or, on a directory,
+      # list and search it. Any other right, a generic one or one this list
+      # does not know included, may change it.
+      ACL_READ_ONLY = AclPermissions::ReadData | AclPermissions::Execute | AclPermissions::ReadAttributes |
+                      AclPermissions::ReadExtattributes | AclPermissions::ReadSecurity | AclPermissions::Synchronize
 
       # Why a directory with *status* may not lead to a configuration file:
       # it must be a directory owned by root or *owner*, the trusted user
@@ -55,15 +55,15 @@ module Tunnelgeist
       end
 
       # Why an object owned by *owner* with the ACL *entries* is refused: an
-      # entry that allows anyone but the owner, a group included, any of
-      # `ACL_WRITES`. Entries the object inherited count like its own;
-      # denials and grants to read or list do not matter.
+      # entry that allows anyone but the owner, a group included, any right
+      # outside `ACL_READ_ONLY`. Entries the object inherited count like its
+      # own; denials and grants to read or list do not matter.
       def self.acl_problem(entries : Array(AclEntry), *, owner : UInt32) : String?
         ACL_WRITE if entries.any? { |entry| entry.allow && entry.uid != owner && writes?(entry.permissions) }
       end
 
       private def self.writes?(permissions : AclPermissions) : Bool
-        !(permissions & ACL_WRITES).none?
+        permissions.value & ~ACL_READ_ONLY.value != 0
       end
 
       private def self.writable_by_others?(status : FileStatus) : Bool

@@ -43,6 +43,7 @@ emfile
 enfile
 enoent
 enotdir
+entrycount
 eopnotsupp
 eperm
 epipe
@@ -50,10 +51,13 @@ errfd
 esrch
 euid
 extattributes
+fchmod
 fcntl
 fdopendir
+filesec
 finalizer
 forall
+fsec
 fstat
 fstatat
 getegid
@@ -87,6 +91,7 @@ iowr
 ismember
 jochen
 jochenseeber
+kauth
 kcov
 kctl
 lchmod
@@ -133,6 +138,8 @@ rakelib
 rchop
 rdonly
 readattr
+readextattr
+readsecurity
 realpath
 recvmsg
 rewinddir
@@ -155,6 +162,7 @@ socklen
 softprops
 stddef
 sysaddr
+syscall
 sysproto
 teamid
 tunnelgeist
@@ -169,3 +177,4 @@ wnohang
 writeattr
 xcrun
 xffff
+xsecurity

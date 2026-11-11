@@ -5,12 +5,14 @@ require "../../../src/tunnelgeist/config/error"
 require "../../../src/tunnelgeist/config/trusted_directory"
 require "../../../src/tunnelgeist/config/directory/missing"
 require "../../../src/tunnelgeist/lib_system"
+require "../support/raw_acl"
 require "../support/trusted_temporary_directory"
 require "../support/temporary_directory"
 
 # The walk from `/` to a configuration file (RF5.1, RF5.3) over real files
 # below the temporary directory, whose own ancestors it walks through too,
-# with ACLs set by `/bin/chmod +a`.
+# with ACLs set by `/bin/chmod +a` and, for rights it cannot set,
+# `fchmod_extended`.
 describe Tunnelgeist::Config::TrustedDirectory do
   {% if flag?(:darwin) %}
     include TunnelgeistTemporaryDirectory
@@ -188,6 +190,25 @@ describe Tunnelgeist::Config::TrustedDirectory do
         add_acl(path, entry: "everyone allow write")
 
         assert(read_error(path).message == "#{path}: grants write access through its ACL")
+      end
+    end
+
+    test "read refuses a file or directory whose ACL grants everyone generic or unknown rights" do
+      # GENERIC_ALL, GENERIC_WRITE, GENERIC_EXECUTE, GENERIC_READ and a bit
+      # acl_perm_t does not name.
+      [0x200000_u32, 0x800000_u32, 0x400000_u32, 0x1000000_u32, 0x4000_u32].each do |rights|
+        with_directory do |directory|
+          path = write(directory, name: "a/config.json")
+          TunnelgeistRawAcl.allow_everyone(path, rights: rights)
+
+          assert(read_error(path).message == "#{path}: grants write access through its ACL")
+        end
+        with_directory do |directory|
+          path = write(directory, name: "a/config.json")
+          TunnelgeistRawAcl.allow_everyone(File.dirname(path), rights: rights)
+
+          assert(read_error(path).message == "#{File.dirname(path)}: grants write access through its ACL")
+        end
       end
     end
 

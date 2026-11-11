@@ -274,9 +274,11 @@ writes only below its temporary directory.
 process as a peer, `temporary_directory.cr` is the suite's own copy of the
 temporary directories, and `trusted_temporary_directory.cr` checks that the
 configuration loader accepts the directories down to one and says which
-directory fails when it does not. They may also use the spec helpers
-`client_configs.cr`, `registrations.cr` and `server_runs.cr`.
-`test/daemon/device_test.cr` holds the daemon tests.
+directory fails when it does not, and `raw_acl.cr` sets an ACL with rights
+`chmod +a` cannot set, through the `fchmod_extended` system call that
+`lib_kauth.cr` binds. They may also use the spec helpers `client_configs.cr`,
+`registrations.cr` and `server_runs.cr`. `test/daemon/device_test.cr` holds the
+daemon tests.
 
 ## Releasing
 

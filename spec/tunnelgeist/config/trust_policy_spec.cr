@@ -101,6 +101,18 @@ describe Tunnelgeist::Config::TrustPolicy do
       assert(TrustPolicy.acl_problem([allow(Permissions::All, uid: OWNER)], owner: OWNER).nil?)
     end
 
+    test "acl_problem refuses a grant of a generic or unnamed right to another user, a group or an unknown principal" do
+      # GENERIC_ALL, GENERIC_EXECUTE, GENERIC_WRITE, GENERIC_READ, a bit
+      # between the named ones and one above them.
+      [0x200000_u64, 0x400000_u64, 0x800000_u64, 0x1000000_u64, 0x4000_u64, 0x8000_0000_u64].each do |bits|
+        [502_u32, 0_u32, nil].each do |uid|
+          entries = [allow(Permissions.new(bits) | Permissions::ReadData, uid: uid)]
+
+          assert(TrustPolicy.acl_problem(entries, owner: OWNER) == "grants write access through its ACL")
+        end
+      end
+    end
+
     test "acl_problem refuses a grant of any write permission to another user, a group or an unknown principal" do
       writes = [Permissions::WriteData, Permissions::AppendData, Permissions::WriteAttributes,
                 Permissions::WriteExtattributes, Permissions::WriteSecurity, Permissions::ChangeOwner,
