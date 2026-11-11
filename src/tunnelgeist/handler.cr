@@ -344,10 +344,14 @@ module Tunnelgeist
       result = @run.call(Commands.get_route(route))
       if result.success? && Commands.routes_to?(result.output, name: entry.name)
         run!(Commands.remove_route(route, name: entry.name))
+        entry.remove_route(route)
       else
-        @log.info { "#{describe_peer(peer)} op=remove_route name=#{entry.name} route #{route} no longer on #{entry.name}, forgotten" }
+        # Logged only once the entry forgot the route: an entry removed
+        # meanwhile refuses, and the reply then says the device is unknown.
+        rejection = entry.remove_route(route)
+        @log.info { "#{describe_peer(peer)} op=remove_route name=#{entry.name} route #{route} no longer on #{entry.name}, forgotten" } unless rejection
+        rejection
       end
-      entry.remove_route(route)
     end
 
     # Runs *argv*; raises `Protocol::Error` when it fails, with the program,

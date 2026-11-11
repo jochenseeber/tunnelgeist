@@ -490,6 +490,22 @@ describe TunnelgeistHandler do
       end
     end
 
+    test "remove_route of a route gone from a device that departs meanwhile does not log it as forgotten" do
+      fixture = HandlerFixture.new
+      fixture.route_get = "   route to: 10.99.0.0\ndestination: 10.99.0.0\n       mask: 255.255.0.0\n  interface: en0\n"
+      register(fixture)
+      fixture.on_run = ->(argv : Array(String)) do
+        fixture.registry.remove(UTUN9) if argv == Commands.get_route(route("10.99.0.0/16"))
+        nil
+      end
+
+      reply = change(fixture, Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
+
+      assert(reply.error == Protocol::UNKNOWN_DEVICE)
+      assert(fixture.logged?("op=remove_route name=utun9 failed: unknown device"))
+      assert(!fixture.logged?("forgotten"))
+    end
+
     test "remove_route of an IPv6 route asks route get with -inet6" do
       fixture = HandlerFixture.new
       fixture.registry.register(UTUN9, index: 21_u32, addresses: [v4(2)], routes: [route("fd99::/48")]) { }
