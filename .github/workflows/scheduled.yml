@@ -1,0 +1,42 @@
+name: Scheduled
+
+# Runs the tests every week against the latest Crystal release, so a new
+# compiler that breaks tunnelgeist shows up without a push. ci.yml tests the
+# version shard.yml pins in `actions.crystal`; this workflow follows whatever
+# the latest release is. GitHub disables scheduled workflows in a repository
+# without activity for 60 days; run it by hand from the Actions tab to check
+# now.
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # tunnelgeist builds and runs on macOS only, so the job runs on a macOS
+  # runner and through rake, as ci.yml does.
+  test-latest:
+    name: Test (latest Crystal, macOS arm64)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: latest
+
+      - name: Show the Crystal version
+        run: crystal --version
+
+      - name: Install dependencies
+        run: shards install
+
+      - name: Run unit tests
+        run: rake spec
+
+      # The tests that need the root daemon and real utun devices
+      # (rake exercise) are not run here; they start the daemon under sudo.
+      - name: Run integration tests
+        run: rake test

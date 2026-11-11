@@ -120,7 +120,10 @@ rake exercise   # starts the daemon under sudo
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the format check, `rake lint`,
 `rake spec` and `rake test` on a macOS runner for every branch push and pull
-request; the daemon tests below run only locally.
+request; the daemon tests below run only locally. Every Monday,
+`.github/workflows/scheduled.yml` runs `rake spec` and `rake test` against the
+latest Crystal release, so a new compiler that breaks tunnelgeist shows up
+without a push; run it by hand from the Actions tab to check now.
 
 ```sh
 rake spec
