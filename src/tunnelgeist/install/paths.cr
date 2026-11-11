@@ -1,6 +1,7 @@
 {% skip_file unless flag?(:darwin) %}
 
 require "../config"
+require "../config/loader"
 require "../install"
 require "./starter"
 
@@ -14,12 +15,15 @@ module Tunnelgeist
     # configuration (CA7).
     record Paths, binary : String, plist : String, config : String, log : String do
       # The paths of a real installation, with the configuration at
-      # *config*, which `install --config` names. A relative *config* is
-      # made absolute against the current directory: launchd starts the
-      # daemon in `/`, so the property list must not carry a relative path.
+      # *config*, which `install --config` names. *config* is resolved as
+      # `serve` resolves it, by `Config::Loader.main_path`: a relative one
+      # from the physical working directory, since launchd starts the
+      # daemon in `/` and the property list must not carry a relative path.
+      # Raises `Config::Error` for a path with a `..` component, which the
+      # daemon would refuse, and when the working directory cannot be read.
       def self.default(*, config : String = Config::DEFAULT_PATH) : Paths
         new(binary: "/usr/local/libexec/tunnelgeist", plist: "/Library/LaunchDaemons/#{LABEL}.plist",
-          config: File.expand_path(config), log: "/var/log/tunnelgeist.log")
+          config: Config::Loader.main_path(config), log: "/var/log/tunnelgeist.log")
       end
 
       # The directory of the main configuration file, which `uninstall`

@@ -343,6 +343,31 @@ describe TunnelgeistInstall do
       ->(path : String) { Tunnelgeist::Config.load(path) }
     end
 
+    test "Paths.default takes a relative configuration path from the physical working directory, not from PWD" do
+      TunnelgeistTemporaryDirectory.with_temporary_directory do |directory|
+        real = File.join(directory, "real")
+        Dir.mkdir(real)
+        link = File.join(directory, "link")
+        File.symlink(real, link)
+        logical = ENV["PWD"]?
+        begin
+          Dir.cd(real) do
+            # A shell started in the link would say so in PWD, which
+            # `Dir.current` returns when it names the working directory.
+            ENV["PWD"] = link
+
+            assert(Install::Paths.default(config: "config.json").config == File.join(real, "config.json"))
+          end
+        ensure
+          if logical
+            ENV["PWD"] = logical
+          else
+            ENV.delete("PWD")
+          end
+        end
+      end
+    end
+
     test "plist passes plutil -lint" do
       assert(lints?(default_plist))
       assert(lints?(default_plist(group_gid: 501_u32)))

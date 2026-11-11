@@ -79,6 +79,24 @@ module Tunnelgeist
         @file = Loader.absolute(@path)
       end
 
+      # The absolute path of the main file *path* names, as `load` reads it:
+      # taken from the physical working directory when *path* is relative,
+      # without empty and `.` components. Raises `Config::Error` naming it
+      # when it has a `..` component, which the walk refuses, or when the
+      # working directory cannot be read. `install` resolves `--config` with
+      # it, so the property list names the file `serve` reads.
+      def self.main_path(path : String) : String
+        file = absolute(path)
+        check_no_parent(file)
+        file
+      end
+
+      # Raises `Config::Error` about the absolute *file* when it has a `..`
+      # component.
+      protected def self.check_no_parent(file : String) : Nil
+        raise Error.new(PARENT_COMPONENT, file: file) if names(file).includes?("..")
+      end
+
       # *path* from `/`, relative to the working directory when it is
       # relative, without empty and `.` components.
       protected def self.absolute(path : String) : String
@@ -115,8 +133,8 @@ module Tunnelgeist
       # or file the walk refuses is named itself, with the walk's reason; a
       # missing one makes the main file missing.
       def load : Config
+        Loader.check_no_parent(@file)
         names = Loader.names(@file)
-        raise Error.new(PARENT_COMPONENT, file: @file) if names.includes?("..")
         if Loader.directory_form?(@path)
           # As the system does, this opens the last name as a directory,
           # which a file is not.

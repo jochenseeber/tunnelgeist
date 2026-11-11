@@ -75,8 +75,7 @@ module Tunnelgeist
         with_options(command, args: args, output: output) { |options| serve(config_path: options.config, error: error) }
       in .install?
         with_options(command, args: args, output: output) do |options|
-          installer = Install.new(paths: Install::Paths.default(config: options.config))
-          installer.install(group: options.group, sudo_user: sudo_user, output: output, error: error)
+          install(options, sudo_user: sudo_user, output: output, error: error)
         end
       in .uninstall?
         with_options(command, args: args, output: output) { Install.new.uninstall(output: output, error: error) }
@@ -86,6 +85,20 @@ module Tunnelgeist
           0
         end
       end
+    end
+
+    # Installs the daemon with the configuration *options* names; a path
+    # the daemon would refuse to read, which `Install::Paths.default`
+    # raises `Config::Error` for, stops it with exit code 1 before
+    # anything happens.
+    private def self.install(options : Options, *, sudo_user : String?, output : IO, error : IO) : Int32
+      paths = begin
+        Install::Paths.default(config: options.config)
+      rescue ex : Config::Error
+        error.puts "tunnelgeist: #{ex.message}"
+        return 1
+      end
+      Install.new(paths: paths).install(group: options.group, sudo_user: sudo_user, output: output, error: error)
     end
 
     # Parses *args* with the options of *command* and yields them; prints

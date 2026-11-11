@@ -219,6 +219,17 @@ describe TunnelgeistCLI do
       assert(result.error.starts_with?("tunnelgeist: Invalid option: --require\n"))
     end
 
+    test "install refuses a configuration path with a .. component before it does anything" do
+      with_temporary_directory do |directory|
+        Dir.cd(directory) do
+          result = run("install", "--config", "etc/../config.json")
+
+          assert(result.status == 1)
+          assert(result.error == "tunnelgeist: #{directory}/etc/../config.json: must not contain a .. component\n")
+        end
+      end
+    end
+
     test "install with an extra argument is a usage error" do
       assert(run("install", "extra").status == 2)
       assert(run("uninstall", "--group", "g").status == 2)

@@ -432,10 +432,26 @@ describe TunnelgeistInstall do
       assert(other.plist == paths.plist)
     end
 
-    test "Paths.default makes a relative configuration path absolute" do
-      paths = Install::Paths.default(config: "etc/../tg/main.json")
+    test "Paths.default takes a relative configuration path from the working directory" do
+      TunnelgeistTemporaryDirectory.with_temporary_directory do |directory|
+        Dir.cd(directory) do
+          paths = Install::Paths.default(config: "./tg//main.json")
 
-      assert(paths.config == File.join(Dir.current, "tg", "main.json"))
+          assert(paths.config == File.join(directory, "tg", "main.json"))
+        end
+      end
+    end
+
+    test "Paths.default refuses a configuration path with a .. component, as the loader does" do
+      TunnelgeistTemporaryDirectory.with_temporary_directory do |directory|
+        Dir.cd(directory) do
+          relative = raised(Tunnelgeist::Config::Error) { Install::Paths.default(config: "etc/../tg/main.json") }
+          absolute = raised(Tunnelgeist::Config::Error) { Install::Paths.default(config: "/etc/../tg/main.json") }
+
+          assert(relative.message == "#{directory}/etc/../tg/main.json: must not contain a .. component")
+          assert(absolute.message == "/etc/../tg/main.json: must not contain a .. component")
+        end
+      end
     end
   {% end %}
 end

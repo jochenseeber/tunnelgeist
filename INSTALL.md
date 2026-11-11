@@ -59,8 +59,10 @@ Two options change this:
   configuration keeps its own `group`, which the plist and the printed
   `dseditgroup` hint then use; that group must exist.
 - `--config PATH` names another main file (default
-  `/usr/local/etc/tunnelgeist/config.json`). `install` makes a relative path
-  absolute, since launchd starts the daemon in `/`.
+  `/usr/local/etc/tunnelgeist/config.json`). Since launchd starts the daemon in
+  `/`, `install` writes it into the plist as an absolute path and takes a
+  relative one from the physical working directory, as `pwd -P` prints it and
+  as `serve` does. Like `serve`, it refuses a path with a `..` component.
 
 ## Directory checks
 
