@@ -11,7 +11,7 @@ module TunnelgeistRegistrations
   # Reserves a slot for *owner* and registers *name* in it; yields a stale
   # entry it replaces, as `Registry#register` does. Raises when the registry
   # refuses the reservation.
-  def register(registry : Tunnelgeist::Registry, name : Tunnelgeist::InterfaceName, *, index : UInt32,
+  def register(registry : Tunnelgeist::Registry, *, name : Tunnelgeist::InterfaceName, index : UInt32,
                addresses : Array(Tunnelgeist::Address) = [] of Tunnelgeist::Address,
                routes : Array(Tunnelgeist::Prefix) = [] of Tunnelgeist::Prefix, owner : UInt32 = OWNER,
                & : Tunnelgeist::Registry::Entry ->) : Nil
@@ -24,9 +24,9 @@ module TunnelgeistRegistrations
   end
 
   # Registers *name* as the block form does, ignoring a stale entry.
-  def register(registry : Tunnelgeist::Registry, name : Tunnelgeist::InterfaceName, *, index : UInt32,
+  def register(registry : Tunnelgeist::Registry, *, name : Tunnelgeist::InterfaceName, index : UInt32,
                addresses : Array(Tunnelgeist::Address) = [] of Tunnelgeist::Address,
                routes : Array(Tunnelgeist::Prefix) = [] of Tunnelgeist::Prefix, owner : UInt32 = OWNER) : Nil
-    register(registry, name, index: index, addresses: addresses, routes: routes, owner: owner) { }
+    register(registry, name: name, index: index, addresses: addresses, routes: routes, owner: owner) { }
   end
 end

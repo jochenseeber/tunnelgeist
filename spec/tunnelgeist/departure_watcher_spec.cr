@@ -115,8 +115,8 @@ describe TunnelgeistDepartureWatcher do
       with_pipe_watcher do |fixture|
         utun7 = Tunnelgeist::InterfaceName.new("utun7")
         utun8 = Tunnelgeist::InterfaceName.new("utun8")
-        TunnelgeistRegistrations.register(fixture.registry, utun7, index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
-        TunnelgeistRegistrations.register(fixture.registry, utun8, index: 13_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+        TunnelgeistRegistrations.register(fixture.registry, name: utun7, index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+        TunnelgeistRegistrations.register(fixture.registry, name: utun8, index: 13_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
         fixture.writer.write(event(DepartureWatcher::LibKernelEvent::KEV_DL_IF_DETACHED))
 
         removed = eventually { unknown?(fixture, name: utun7) }
@@ -128,7 +128,7 @@ describe TunnelgeistDepartureWatcher do
 
     # Registers a device *name* without addresses or routes.
     def entry(fixture : PipeWatcher, *, name : Tunnelgeist::InterfaceName, index : UInt32) : Nil
-      TunnelgeistRegistrations.register(fixture.registry, name, index: index, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(fixture.registry, name: name, index: index, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
     end
 
     # Whether the registry has no entry for *name*.

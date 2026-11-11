@@ -76,7 +76,7 @@ describe TunnelgeistServer do
 
     test "run keeps running while a device is registered and returns once it is removed" do
       with_server do |fixture|
-        TunnelgeistRegistrations.register(fixture.registry, UTUN7, index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
+        TunnelgeistRegistrations.register(fixture.registry, name: UTUN7, index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
         done = start(fixture.server)
         running = !returned?(done, within: 500.milliseconds)
         assert(running)
@@ -106,7 +106,7 @@ describe TunnelgeistServer do
 
     test "run keeps serving through failed accepts and serves the next connection" do
       with_server(failures: 2) do |fixture|
-        TunnelgeistRegistrations.register(fixture.registry, UTUN7, index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
+        TunnelgeistRegistrations.register(fixture.registry, name: UTUN7, index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
         done = start(fixture.server)
         client = UNIXSocket.new(fixture.path)
         begin

@@ -261,7 +261,7 @@ describe TunnelgeistHandler do
     # by default the request's own name, closes the spec's copy, runs the
     # handler and returns the reply. Checks that the handler left no copy of
     # the descriptor open.
-    def change(fixture : HandlerFixture, request : Protocol::DeviceRequest, *, device : Tunnelgeist::InterfaceName? = request.name,
+    def change(fixture : HandlerFixture, *, request : Protocol::DeviceRequest, device : Tunnelgeist::InterfaceName? = request.name,
                handler = fixture.handler) : Protocol::Reply
       fake = fixture.fake_device(device)
       begin
@@ -294,7 +294,7 @@ describe TunnelgeistHandler do
     end
 
     def register(fixture : HandlerFixture) : Nil
-      TunnelgeistRegistrations.register(fixture.registry, UTUN9, index: 21_u32, addresses: [v4(2)], routes: [route("10.99.0.0/16")]) { }
+      TunnelgeistRegistrations.register(fixture.registry, name: UTUN9, index: 21_u32, addresses: [v4(2)], routes: [route("10.99.0.0/16")]) { }
     end
 
     test "create builds the device, configures it in order, registers it and passes the descriptor" do
@@ -463,8 +463,8 @@ describe TunnelgeistHandler do
       fixture = HandlerFixture.new
       register(fixture)
 
-      added = change(fixture, Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16")))
-      removed = change(fixture, Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
+      added = change(fixture, request: Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16")))
+      removed = change(fixture, request: Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
 
       assert(added == Protocol::Reply.new(ok: true))
       assert(removed == Protocol::Reply.new(ok: true))
@@ -489,7 +489,7 @@ describe TunnelgeistHandler do
         fixture.route_get = output
         register(fixture)
 
-        reply = change(fixture, Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
+        reply = change(fixture, request: Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
 
         assert(reply == Protocol::Reply.new(ok: true))
         assert(fixture.commands == [Commands.get_route(route("10.99.0.0/16"))])
@@ -507,7 +507,7 @@ describe TunnelgeistHandler do
         nil
       end
 
-      reply = change(fixture, Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
+      reply = change(fixture, request: Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
 
       assert(reply.error == Protocol::UNKNOWN_DEVICE)
       assert(fixture.logged?("op=remove_route name=utun9 failed: unknown device"))
@@ -516,9 +516,9 @@ describe TunnelgeistHandler do
 
     test "remove_route of an IPv6 route asks route get with -inet6" do
       fixture = HandlerFixture.new
-      TunnelgeistRegistrations.register(fixture.registry, UTUN9, index: 21_u32, addresses: [v4(2)], routes: [route("fd99::/48")]) { }
+      TunnelgeistRegistrations.register(fixture.registry, name: UTUN9, index: 21_u32, addresses: [v4(2)], routes: [route("fd99::/48")]) { }
 
-      reply = change(fixture, Protocol::RemoveRoute.new(name: UTUN9, route: route("fd99::/48")))
+      reply = change(fixture, request: Protocol::RemoveRoute.new(name: UTUN9, route: route("fd99::/48")))
 
       assert(reply.ok)
       assert(fixture.commands == [
@@ -531,8 +531,8 @@ describe TunnelgeistHandler do
       fixture = HandlerFixture.new
       register(fixture)
 
-      added = change(fixture, Protocol::AddAddress.new(name: UTUN9, address: v4(3)))
-      removed = change(fixture, Protocol::RemoveAddress.new(name: UTUN9, address: v4(2)))
+      added = change(fixture, request: Protocol::AddAddress.new(name: UTUN9, address: v4(3)))
+      removed = change(fixture, request: Protocol::RemoveAddress.new(name: UTUN9, address: v4(2)))
 
       assert(added.ok)
       assert(removed.ok)
@@ -548,7 +548,7 @@ describe TunnelgeistHandler do
       fixture = HandlerFixture.new
       register(fixture)
 
-      unknown = change(fixture, Protocol::AddRoute.new(name: Tunnelgeist::InterfaceName.new("utun8"), route: route("10.98.0.0/16")))
+      unknown = change(fixture, request: Protocol::AddRoute.new(name: Tunnelgeist::InterfaceName.new("utun8"), route: route("10.98.0.0/16")))
 
       assert(unknown.error == Protocol::UNKNOWN_DEVICE)
       assert(fixture.logged?("op=add_route name=utun8 failed: unknown device"))
@@ -563,7 +563,7 @@ describe TunnelgeistHandler do
         register(fixture)
         fixture.indexes[UTUN9] = index
 
-        reply = change(fixture, Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
+        reply = change(fixture, request: Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
 
         assert(reply.error == Protocol::UNKNOWN_DEVICE)
         assert(fixture.registry.empty?)
@@ -575,8 +575,8 @@ describe TunnelgeistHandler do
       fixture = HandlerFixture.new
       register(fixture)
 
-      duplicate = change(fixture, Protocol::AddRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
-      foreign = change(fixture, Protocol::RemoveAddress.new(name: UTUN9, address: v4(5)))
+      duplicate = change(fixture, request: Protocol::AddRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
+      foreign = change(fixture, request: Protocol::RemoveAddress.new(name: UTUN9, address: v4(5)))
 
       assert(duplicate.error == "route 10.99.0.0/16 already on utun9")
       assert(foreign.error == "address 10.77.0.5 was not added by the helper")
@@ -590,7 +590,7 @@ describe TunnelgeistHandler do
       fixture.failing = "/sbin/route"
       register(fixture)
 
-      reply = change(fixture, Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
+      reply = change(fixture, request: Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
 
       assert(reply.error == "/sbin/route exited 1: route: File exists")
       assert(recorded?(fixture, item: route("10.99.0.0/16")))
@@ -638,7 +638,7 @@ describe TunnelgeistHandler do
       fixture = HandlerFixture.new
       register(fixture)
 
-      reply = change(fixture, Protocol::AddAddress.new(name: UTUN9, address: v4(3)), device: nil)
+      reply = change(fixture, request: Protocol::AddAddress.new(name: UTUN9, address: v4(3)), device: nil)
 
       assert(reply == Protocol::Reply.new(ok: false, error: "descriptor is not a utun device"))
       assert(fixture.verified.size == 1)
@@ -652,7 +652,7 @@ describe TunnelgeistHandler do
       register(fixture)
       fixture.lookup_error = Tunnelgeist::Device::ControlLookupError.new("CTLIOCGINFO com.apple.net.utun_control: Operation not permitted")
 
-      reply = change(fixture, Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16")))
+      reply = change(fixture, request: Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16")))
 
       assert(reply == Protocol::Reply.new(ok: false, error: "descriptor is not a utun device"))
       assert(fixture.commands.empty?)
@@ -666,7 +666,7 @@ describe TunnelgeistHandler do
       fixture = HandlerFixture.new
       register(fixture)
 
-      reply = change(fixture, Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16")), device: nil)
+      reply = change(fixture, request: Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16")), device: nil)
 
       assert(reply.error == "descriptor is not a utun device")
       assert(fixture.backend.entries.none?(&.severity.error?))
@@ -675,9 +675,9 @@ describe TunnelgeistHandler do
     test "a change with the descriptor of another device is refused, names both and runs nothing" do
       fixture = HandlerFixture.new
       register(fixture)
-      TunnelgeistRegistrations.register(fixture.registry, UTUN8, index: 20_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(fixture.registry, name: UTUN8, index: 20_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
 
-      reply = change(fixture, Protocol::RemoveAddress.new(name: UTUN9, address: v4(2)), device: UTUN8)
+      reply = change(fixture, request: Protocol::RemoveAddress.new(name: UTUN9, address: v4(2)), device: UTUN8)
 
       assert(reply == Protocol::Reply.new(ok: false, error: "descriptor is utun8, not utun9"))
       assert(fixture.commands.empty?)
@@ -708,7 +708,7 @@ describe TunnelgeistHandler do
       fixture = HandlerFixture.new
       register(fixture)
 
-      reply = change(fixture, Protocol::AddRoute.new(name: Tunnelgeist::InterfaceName.new("utun8"), route: route("10.98.0.0/16")))
+      reply = change(fixture, request: Protocol::AddRoute.new(name: Tunnelgeist::InterfaceName.new("utun8"), route: route("10.98.0.0/16")))
 
       assert(reply.error == Protocol::UNKNOWN_DEVICE)
       assert(fixture.verified.size == 1)
@@ -731,11 +731,11 @@ describe TunnelgeistHandler do
     # command runs, with the channel that receives the reply.
     def start_held_change(fixture : HandlerFixture, *, gate : Channel(Nil)) : Channel(Protocol::Reply | Exception)
       register(fixture)
-      TunnelgeistRegistrations.register(fixture.registry, UTUN8, index: 22_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(fixture.registry, name: UTUN8, index: 22_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
       fixture.indexes[UTUN8] = 22_u32
       started = Channel(Array(String)).new(4)
       hold_utun9_commands(fixture, gate: gate, started: started)
-      held = later { change(fixture, Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16"))) }
+      held = later { change(fixture, request: Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16"))) }
       assert(promptly { started.receive } == Commands.add_route(route("10.98.0.0/16"), name: UTUN9))
       held
     end
@@ -745,7 +745,7 @@ describe TunnelgeistHandler do
       gate = Channel(Nil).new
       held = start_held_change(fixture, gate: gate)
 
-      other = promptly { change(fixture, Protocol::AddRoute.new(name: UTUN8, route: route("10.97.0.0/16"))) }
+      other = promptly { change(fixture, request: Protocol::AddRoute.new(name: UTUN8, route: route("10.97.0.0/16"))) }
 
       assert(other.ok)
       assert(recorded?(fixture, item: route("10.97.0.0/16"), name: UTUN8))
@@ -803,7 +803,7 @@ describe TunnelgeistHandler do
       gate = Channel(Nil).new
       held = start_held_change(fixture, gate: gate)
 
-      promptly { TunnelgeistRegistrations.register(fixture.registry, UTUN9, index: 24_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { } }
+      promptly { TunnelgeistRegistrations.register(fixture.registry, name: UTUN9, index: 24_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { } }
       gate.send(nil)
       reply = awaited(held)
 
@@ -816,7 +816,7 @@ describe TunnelgeistHandler do
       fixture = HandlerFixture.new
       gate = Channel(Nil).new
       held = start_held_change(fixture, gate: gate)
-      waiting = later { change(fixture, Protocol::AddRoute.new(name: UTUN9, route: route("10.97.0.0/16"))) }
+      waiting = later { change(fixture, request: Protocol::AddRoute.new(name: UTUN9, route: route("10.97.0.0/16"))) }
       # The second change has pinned its descriptor once the name lookup saw
       # it, and then waits for the entry the first one holds.
       promptly do
@@ -1017,7 +1017,7 @@ describe TunnelgeistHandler do
       register(fixture)
       fixture.admission = Admission.new(clients: [] of Config::Client, refusals: [client_refusal("vpn", reason: Reason::Requirement)])
 
-      reply = change(fixture, Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
+      reply = change(fixture, request: Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
 
       assert(reply.error == REFUSAL)
       assert(fixture.commands.empty?)
@@ -1120,8 +1120,8 @@ describe TunnelgeistHandler do
       register(fixture)
       fixture.admission = applying([client("lab", addresses: [rule("10.1.0.0/16", peer: "10.1.0.0/16")], routes: ["10.99.0.0/16"])])
 
-      routed = change(fixture, Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16")))
-      addressed = change(fixture, Protocol::AddAddress.new(name: UTUN9, address: v4(3)))
+      routed = change(fixture, request: Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16")))
+      addressed = change(fixture, request: Protocol::AddAddress.new(name: UTUN9, address: v4(3)))
 
       assert(routed == Protocol::Reply.new(ok: false, error: "route 10.98.0.0/16 not allowed"))
       assert(addressed == Protocol::Reply.new(ok: false, error: "address 10.77.0.3/24 not allowed"))
@@ -1137,7 +1137,7 @@ describe TunnelgeistHandler do
       register(fixture)
       fixture.admission = applying([client("lab", addresses: [] of Config::AddressRule, routes: ["10.99.0.0/16"])])
 
-      reply = change(fixture, Protocol::AddRoute.new(name: Tunnelgeist::InterfaceName.new("utun8"), route: route("10.98.0.0/16")))
+      reply = change(fixture, request: Protocol::AddRoute.new(name: Tunnelgeist::InterfaceName.new("utun8"), route: route("10.98.0.0/16")))
 
       assert(reply.error == Protocol::UNKNOWN_DEVICE)
       assert(fixture.commands.empty?)
@@ -1151,7 +1151,7 @@ describe TunnelgeistHandler do
         client("wide", addresses: [] of Config::AddressRule, routes: ["10.0.0.0/8"]),
       ])
 
-      reply = change(fixture, Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16")))
+      reply = change(fixture, request: Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16")))
 
       assert(reply == Protocol::Reply.new(ok: true))
       assert(fixture.commands == [Commands.add_route(route("10.98.0.0/16"), name: UTUN9)])
@@ -1163,8 +1163,8 @@ describe TunnelgeistHandler do
       register(fixture)
       fixture.admission = applying([client("none", addresses: [] of Config::AddressRule, routes: [] of String)])
 
-      routed = change(fixture, Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
-      addressed = change(fixture, Protocol::RemoveAddress.new(name: UTUN9, address: v4(2)))
+      routed = change(fixture, request: Protocol::RemoveRoute.new(name: UTUN9, route: route("10.99.0.0/16")))
+      addressed = change(fixture, request: Protocol::RemoveAddress.new(name: UTUN9, address: v4(2)))
 
       assert(routed.ok)
       assert(addressed.ok)
@@ -1368,7 +1368,7 @@ describe TunnelgeistHandler do
 
     test "a create over the total device limit is refused before the device exists" do
       fixture = HandlerFixture.new(Tunnelgeist::Registry.new(max_devices: 1, max_devices_per_user: 1))
-      TunnelgeistRegistrations.register(fixture.registry, UTUN8, index: 20_u32, owner: own_uid + 1)
+      TunnelgeistRegistrations.register(fixture.registry, name: UTUN8, index: 20_u32, owner: own_uid + 1)
       fixture.indexes[UTUN8] = 20_u32
 
       reply = exchange(fixture, request: line(empty_create)).reply
@@ -1441,11 +1441,11 @@ describe TunnelgeistHandler do
 
     test "a change that finds the interface index changed frees the device slot of the entry it removes" do
       fixture = limited_fixture
-      TunnelgeistRegistrations.register(fixture.registry, UTUN9, index: 21_u32, owner: own_uid)
+      TunnelgeistRegistrations.register(fixture.registry, name: UTUN9, index: 21_u32, owner: own_uid)
       fixture.indexes[UTUN9] = 22_u32
       before = slot_free?(fixture)
 
-      reply = change(fixture, Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16")))
+      reply = change(fixture, request: Protocol::AddRoute.new(name: UTUN9, route: route("10.98.0.0/16")))
 
       assert(!before)
       assert(reply.error == Protocol::UNKNOWN_DEVICE)
@@ -1457,7 +1457,7 @@ describe TunnelgeistHandler do
     def register_sixteen(fixture : HandlerFixture, *, live : Range(Int32, Int32)) : Nil
       (10..25).each do |unit|
         name = Tunnelgeist::InterfaceName.new("utun#{unit}")
-        TunnelgeistRegistrations.register(fixture.registry, name, index: 100_u32 + unit, owner: own_uid)
+        TunnelgeistRegistrations.register(fixture.registry, name: name, index: 100_u32 + unit, owner: own_uid)
         fixture.indexes[name] = 100_u32 + unit if live.includes?(unit)
       end
     end
@@ -1493,8 +1493,8 @@ describe TunnelgeistHandler do
 
     test "a create at the total device limit removes any user's entries whose interfaces are gone" do
       fixture = HandlerFixture.new(Tunnelgeist::Registry.new(max_devices: 2, max_devices_per_user: 2))
-      TunnelgeistRegistrations.register(fixture.registry, UTUN8, index: 20_u32, owner: own_uid + 1)
-      TunnelgeistRegistrations.register(fixture.registry, Tunnelgeist::InterfaceName.new("utun7"), index: 19_u32, owner: own_uid + 2)
+      TunnelgeistRegistrations.register(fixture.registry, name: UTUN8, index: 20_u32, owner: own_uid + 1)
+      TunnelgeistRegistrations.register(fixture.registry, name: Tunnelgeist::InterfaceName.new("utun7"), index: 19_u32, owner: own_uid + 2)
       fixture.indexes[UTUN8] = 20_u32
 
       exchanged = exchange(fixture, request: line(empty_create))

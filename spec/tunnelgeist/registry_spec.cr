@@ -56,7 +56,7 @@ describe TunnelgeistRegistry do
 
     test "register records an entry that with_entry yields" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [v4], routes: [route("10.99.0.0/16")]) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [v4], routes: [route("10.99.0.0/16")]) { }
 
       assert(!registry.empty?)
 
@@ -72,10 +72,10 @@ describe TunnelgeistRegistry do
       registry = Tunnelgeist::Registry.new
       empty_addresses = [] of Tunnelgeist::Address
       empty_routes = [] of Tunnelgeist::Prefix
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: [route("10.99.0.0/16")]) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: [route("10.99.0.0/16")]) { }
 
       replaced = [] of Replaced
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 13_u32, addresses: empty_addresses, routes: empty_routes) do |stale|
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 13_u32, addresses: empty_addresses, routes: empty_routes) do |stale|
         replaced << Replaced.new(name: stale.name, index: stale.index, route_recorded: recorded?(stale, route: route("10.99.0.0/16")))
       end
 
@@ -90,7 +90,7 @@ describe TunnelgeistRegistry do
       registry = Tunnelgeist::Registry.new
       yielded = false
 
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) do
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) do
         yielded = true
       end
 
@@ -99,7 +99,7 @@ describe TunnelgeistRegistry do
 
     test "with_entry yields nothing for an unknown name and returns UNKNOWN_DEVICE" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
       yielded = false
 
       unknown = registry.with_entry(ifname("utun8")) { yielded = true }
@@ -112,7 +112,7 @@ describe TunnelgeistRegistry do
 
     test "a rejection of a change names the field it is about" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [route("10.99.0.0/16")]) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [route("10.99.0.0/16")]) { }
 
       within_entry(registry, name: ifname("utun7")) do |entry|
         assert(entry.check_add_address(v4(1)).try(&.field!) == "address")
@@ -125,14 +125,14 @@ describe TunnelgeistRegistry do
 
     test "with_entry returns the value of the block" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
 
       assert(registry.with_entry(ifname("utun7"), &.name) == ifname("utun7"))
     end
 
     test "a block in with_entry may remove its own entry" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
 
       within_entry(registry, name: ifname("utun7")) do |entry|
         registry.remove(entry.name)
@@ -146,12 +146,12 @@ describe TunnelgeistRegistry do
       registry = Tunnelgeist::Registry.new
       empty_addresses = [] of Tunnelgeist::Address
       empty_routes = [] of Tunnelgeist::Prefix
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
-      TunnelgeistRegistrations.register(registry, ifname("utun8"), index: 13_u32, addresses: empty_addresses, routes: empty_routes) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun8"), index: 13_u32, addresses: empty_addresses, routes: empty_routes) { }
 
       within_entry(registry, name: ifname("utun7")) do
         assert(promptly { registry.with_entry(ifname("utun8"), &.index) } == 13_u32)
-        promptly { TunnelgeistRegistrations.register(registry, ifname("utun9"), index: 14_u32, addresses: empty_addresses, routes: empty_routes) { } }
+        promptly { TunnelgeistRegistrations.register(registry, name: ifname("utun9"), index: 14_u32, addresses: empty_addresses, routes: empty_routes) { } }
         assert(promptly { registry.remove(ifname("utun8")) })
         assert(!promptly { registry.empty? })
       end
@@ -161,7 +161,7 @@ describe TunnelgeistRegistry do
 
     test "a removal of an entry a block holds returns at once and the entry records nothing more" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [route("10.99.0.0/16")]) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [route("10.99.0.0/16")]) { }
 
       within_entry(registry, name: ifname("utun7")) do |entry|
         assert(promptly { registry.remove(ifname("utun7")) })
@@ -180,7 +180,7 @@ describe TunnelgeistRegistry do
 
     test "with_entry yields nothing when the entry is removed while it waits for the entry" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
       yielded = false
       waiter = Channel(Tunnelgeist::Registry::Rejection | Bool | Exception).new(1)
 
@@ -199,10 +199,10 @@ describe TunnelgeistRegistry do
       registry = Tunnelgeist::Registry.new
       empty_addresses = [] of Tunnelgeist::Address
       empty_routes = [] of Tunnelgeist::Prefix
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
       stale = registry.with_entry(ifname("utun7"), &.itself).as(Tunnelgeist::Registry::Entry)
 
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 13_u32, addresses: empty_addresses, routes: empty_routes) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 13_u32, addresses: empty_addresses, routes: empty_routes) { }
 
       assert(refusal(stale.add_route(route("10.98.0.0/16"))) == Protocol::UNKNOWN_DEVICE)
       assert(registry.with_entry(ifname("utun7")) { |entry| recorded?(entry, route: route("10.98.0.0/16")) } == false)
@@ -212,9 +212,9 @@ describe TunnelgeistRegistry do
       registry = Tunnelgeist::Registry.new
       empty_addresses = [] of Tunnelgeist::Address
       empty_routes = [] of Tunnelgeist::Prefix
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
       stale = registry.with_entry(ifname("utun7"), &.itself).as(Tunnelgeist::Registry::Entry)
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 13_u32, addresses: empty_addresses, routes: empty_routes) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 13_u32, addresses: empty_addresses, routes: empty_routes) { }
       current = registry.with_entry(ifname("utun7"), &.itself).as(Tunnelgeist::Registry::Entry)
 
       assert(!registry.remove(stale))
@@ -226,7 +226,7 @@ describe TunnelgeistRegistry do
 
     test "remove forgets the entry" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
 
       registry.remove(ifname("utun7"))
 
@@ -239,16 +239,16 @@ describe TunnelgeistRegistry do
       registry = Tunnelgeist::Registry.new
       empty_addresses = [] of Tunnelgeist::Address
       empty_routes = [] of Tunnelgeist::Prefix
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: empty_routes) { }
       registry.remove(ifname("utun7"))
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 14_u32, addresses: empty_addresses, routes: empty_routes) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 14_u32, addresses: empty_addresses, routes: empty_routes) { }
 
       assert(registry.with_entry(ifname("utun7"), &.index) == 14_u32)
     end
 
     test "add_address and remove_address track what the helper added" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [] of Tunnelgeist::Prefix) { }
 
       within_entry(registry, name: ifname("utun7")) do |entry|
         assert(entry.add_address(v4(2)).nil?)
@@ -262,7 +262,7 @@ describe TunnelgeistRegistry do
 
     test "add_address refuses one the device has and remove_address one it does not" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [] of Tunnelgeist::Prefix) { }
 
       within_entry(registry, name: ifname("utun7")) do |entry|
         assert(refusal(entry.add_address(v4(1))) == "address 10.77.0.1 already on utun7")
@@ -274,7 +274,7 @@ describe TunnelgeistRegistry do
 
     test "an address is identified by its local address, whatever its prefix or peer" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [] of Tunnelgeist::Prefix) { }
       other_prefix = Tunnelgeist::Address.new(
         Socket::IPAddress.new("10.77.0.1", 0), prefix: 25, peer: Socket::IPAddress.new("10.77.1.1", 0))
       other_peer = Tunnelgeist::Address.new(
@@ -297,14 +297,14 @@ describe TunnelgeistRegistry do
         Socket::IPAddress.new("10.77.0.1", 0), prefix: 25, peer: Socket::IPAddress.new("10.77.1.1", 0))
 
       error = raised(ArgumentError) do
-        TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [v4(1), other_prefix], routes: [] of Tunnelgeist::Prefix) { }
+        TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [v4(1), other_prefix], routes: [] of Tunnelgeist::Prefix) { }
       end
       assert(error.message == "address 10.77.0.1 listed twice")
     end
 
     test "add_route and remove_route track what the helper added" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [route("10.99.0.0/16")]) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [route("10.99.0.0/16")]) { }
 
       within_entry(registry, name: ifname("utun7")) do |entry|
         assert(entry.add_route(route("10.98.0.0/16")).nil?)
@@ -318,7 +318,7 @@ describe TunnelgeistRegistry do
 
     test "add_route refuses a route the device has and remove_route a foreign one" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [route("10.99.0.0/16")]) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [route("10.99.0.0/16")]) { }
 
       within_entry(registry, name: ifname("utun7")) do |entry|
         assert(refusal(entry.add_route(route("10.99.0.0/16"))) == "route 10.99.0.0/16 already on utun7")
@@ -332,8 +332,8 @@ describe TunnelgeistRegistry do
     test "a route of the same prefix on another device is not removable" do
       registry = Tunnelgeist::Registry.new
       empty_addresses = [] of Tunnelgeist::Address
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: [route("10.99.0.0/16")]) { }
-      TunnelgeistRegistrations.register(registry, ifname("utun8"), index: 13_u32, addresses: empty_addresses, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: empty_addresses, routes: [route("10.99.0.0/16")]) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun8"), index: 13_u32, addresses: empty_addresses, routes: [] of Tunnelgeist::Prefix) { }
 
       within_entry(registry, name: ifname("utun8")) do |entry|
         assert(refusal(entry.remove_route(route("10.99.0.0/16"))) == "route 10.99.0.0/16 was not added by the helper")
@@ -344,7 +344,7 @@ describe TunnelgeistRegistry do
     test "the address total counts the addresses the device already has" do
       registry = Tunnelgeist::Registry.new
       existing = (1..15).map { |last| v4(last) }
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: existing, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: existing, routes: [] of Tunnelgeist::Prefix) { }
 
       within_entry(registry, name: ifname("utun7")) do |entry|
         assert(entry.add_address(v4(16)).nil?)
@@ -357,7 +357,7 @@ describe TunnelgeistRegistry do
     test "the route total counts the routes the device already has" do
       registry = Tunnelgeist::Registry.new
       existing = (1..63).map { |third| route("10.#{third}.0.0/16") }
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: existing) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: existing) { }
 
       within_entry(registry, name: ifname("utun7")) do |entry|
         assert(entry.add_route(route("10.100.0.0/16")).nil?)
@@ -369,7 +369,7 @@ describe TunnelgeistRegistry do
 
     test "changes made inside with_entry persist" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
 
       registry.with_entry(ifname("utun7"), &.add_route(route("10.99.0.0/16")))
 
@@ -378,7 +378,7 @@ describe TunnelgeistRegistry do
 
     test "the check methods refuse what the change would refuse and change nothing" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [route("10.99.0.0/16")]) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [route("10.99.0.0/16")]) { }
 
       within_entry(registry, name: ifname("utun7")) do |entry|
         assert(refusal(entry.check_add_address(v4(1))) == "address 10.77.0.1 already on utun7")
@@ -395,7 +395,7 @@ describe TunnelgeistRegistry do
 
     test "the check methods accept a valid change without making it" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [route("10.99.0.0/16")]) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: [v4(1)], routes: [route("10.99.0.0/16")]) { }
 
       within_entry(registry, name: ifname("utun7")) do |entry|
         assert(entry.check_add_address(v4(2)).nil?)
@@ -413,7 +413,7 @@ describe TunnelgeistRegistry do
       registry = Tunnelgeist::Registry.new
       addresses = (1..16).map { |last| v4(last) }
       routes = (1..64).map { |third| route("10.#{third}.0.0/16") }
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, addresses: addresses, routes: routes) { }
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, addresses: addresses, routes: routes) { }
 
       within_entry(registry, name: ifname("utun7")) do |entry|
         assert(refusal(entry.check_add_address(v4(17))) == "utun7 would have more than 16 addresses")
@@ -448,15 +448,15 @@ describe TunnelgeistRegistry do
       assert(Tunnelgeist::Registry::MAX_DEVICES == 128)
       assert(Tunnelgeist::Registry::MAX_DEVICES_PER_USER == 16)
       registry = Tunnelgeist::Registry.new
-      16.times { |unit| TunnelgeistRegistrations.register(registry, ifname("utun#{unit}"), index: unit.to_u32 + 1, owner: 501_u32) }
+      16.times { |unit| TunnelgeistRegistrations.register(registry, name: ifname("utun#{unit}"), index: unit.to_u32 + 1, owner: 501_u32) }
 
       assert(reserve_refusal(registry, owner: 501_u32) == "device limit of 16 reached for uid 501")
     end
 
     test "reserve refuses an owner at the per-user limit and admits another owner" do
       registry = Tunnelgeist::Registry.new(max_devices: 10, max_devices_per_user: 2)
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, owner: 501_u32)
-      TunnelgeistRegistrations.register(registry, ifname("utun8"), index: 13_u32, owner: 501_u32)
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, owner: 501_u32)
+      TunnelgeistRegistrations.register(registry, name: ifname("utun8"), index: 13_u32, owner: 501_u32)
 
       assert(reserve_refusal(registry, owner: 501_u32) == "device limit of 2 reached for uid 501")
       assert(reserve_refusal(registry, owner: 502_u32).nil?)
@@ -464,8 +464,8 @@ describe TunnelgeistRegistry do
 
     test "reserve refuses every owner at the total limit" do
       registry = Tunnelgeist::Registry.new(max_devices: 2, max_devices_per_user: 2)
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, owner: 501_u32)
-      TunnelgeistRegistrations.register(registry, ifname("utun8"), index: 13_u32, owner: 502_u32)
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, owner: 501_u32)
+      TunnelgeistRegistrations.register(registry, name: ifname("utun8"), index: 13_u32, owner: 502_u32)
 
       assert(reserve_refusal(registry, owner: 501_u32) == "device limit of 2 reached")
       assert(reserve_refusal(registry, owner: 503_u32) == "device limit of 2 reached")
@@ -532,7 +532,7 @@ describe TunnelgeistRegistry do
 
     test "remove by name frees the slot of the entry, as a departure does" do
       registry = Tunnelgeist::Registry.new(max_devices: 1, max_devices_per_user: 1)
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, owner: 501_u32)
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, owner: 501_u32)
 
       assert(registry.remove(ifname("utun7")))
       assert(reserve_refusal(registry, owner: 501_u32).nil?)
@@ -544,9 +544,9 @@ describe TunnelgeistRegistry do
 
     test "remove of an entry frees its slot once, and a replaced entry frees nothing more" do
       registry = Tunnelgeist::Registry.new(max_devices: 2, max_devices_per_user: 2)
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, owner: 501_u32)
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, owner: 501_u32)
       stale = registry.with_entry(ifname("utun7"), &.itself).as(Tunnelgeist::Registry::Entry)
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 13_u32, owner: 502_u32)
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 13_u32, owner: 502_u32)
       current = registry.with_entry(ifname("utun7"), &.itself).as(Tunnelgeist::Registry::Entry)
 
       # The replacement freed the slot of 501's stale entry.
@@ -561,8 +561,8 @@ describe TunnelgeistRegistry do
 
     test "a stale entry that register replaces frees its owner's slot" do
       registry = Tunnelgeist::Registry.new(max_devices: 10, max_devices_per_user: 2)
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, owner: 501_u32)
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 13_u32, owner: 501_u32)
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, owner: 501_u32)
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 13_u32, owner: 501_u32)
 
       reserved(registry, owner: 501_u32)
       assert(reserve_refusal(registry, owner: 501_u32) == "device limit of 2 reached for uid 501")
@@ -575,14 +575,14 @@ describe TunnelgeistRegistry do
 
     test "entries_counting_against names the owner's entries at the per-user limit and every entry at the total" do
       registry = Tunnelgeist::Registry.new(max_devices: 3, max_devices_per_user: 2)
-      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, owner: 501_u32)
+      TunnelgeistRegistrations.register(registry, name: ifname("utun7"), index: 12_u32, owner: 501_u32)
 
       assert(registry.entries_counting_against(501_u32).empty?)
-      TunnelgeistRegistrations.register(registry, ifname("utun8"), index: 13_u32, owner: 501_u32)
+      TunnelgeistRegistrations.register(registry, name: ifname("utun8"), index: 13_u32, owner: 501_u32)
       assert(names(registry.entries_counting_against(501_u32)) == ["utun7", "utun8"])
       assert(registry.entries_counting_against(502_u32).empty?)
 
-      TunnelgeistRegistrations.register(registry, ifname("utun9"), index: 14_u32, owner: 502_u32)
+      TunnelgeistRegistrations.register(registry, name: ifname("utun9"), index: 14_u32, owner: 502_u32)
       assert(names(registry.entries_counting_against(501_u32)) == ["utun7", "utun8"])
       assert(names(registry.entries_counting_against(502_u32)) == ["utun7", "utun8", "utun9"])
     end

@@ -15,7 +15,7 @@ describe TunnelgeistHandler do
 
     test "a change that carries the end of a Unix socket pair is refused as no utun device and runs nothing" do
       registry = Tunnelgeist::Registry.new
-      TunnelgeistRegistrations.register(registry, UTUN9, index: 21_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      TunnelgeistRegistrations.register(registry, name: UTUN9, index: 21_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
       commands = [] of Array(String)
       handler = Tunnelgeist::Handler.new(registry,
         create_device: ->(_name : Tunnelgeist::InterfaceName?, _mtu : Int32) : Tunnelgeist::Device::Utun { raise "no device in this test" },
