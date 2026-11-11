@@ -1,6 +1,7 @@
 require "../spec_helper"
 require "../../src/tunnelgeist/handler"
 require "../../src/tunnelgeist/client"
+require "../../src/tunnelgeist/lib_directory"
 require "./support/client_configs"
 require "./support/temporary_directory"
 
@@ -41,6 +42,14 @@ describe TunnelgeistClient do
       getter commands = [] of Array(String)
       # The kernel's end of each fake device.
       getter peers = [] of IO::FileDescriptor
+      # A copy of the client's end of each fake device, held until `close`.
+      # The handler closes its own copy once it has sent it, which leaves the
+      # descriptor only in flight until the client receives it, and closing a
+      # Unix socket then runs the kernel's collector of in-flight descriptors.
+      # That collector can take a socket in flight for garbage and flush it,
+      # after which writes to it fail with EINVAL; a copy held here keeps it
+      # reachable.
+      @held = [] of Int32
       getter registry = Tunnelgeist::Registry.new
       # The names the fake name lookup gave the descriptors it was asked
       # about, one per change request that carried one.
@@ -67,6 +76,7 @@ describe TunnelgeistClient do
         @server.close
         FileUtils.rm_rf(@directory)
         @peers.each(&.close)
+        @held.each { |fd| LibC.close(fd) }
       end
 
       private def accept_loop : Nil
@@ -104,6 +114,10 @@ describe TunnelgeistClient do
       private def create_device(name : Tunnelgeist::InterfaceName?) : Tunnelgeist::Device::Utun
         fds = StaticArray(Int32, 2).new(-1)
         raise IO::Error.from_errno("socketpair") if LibC.socketpair(LibC::AF_UNIX, LibC::SOCK_DGRAM, 0, fds) < 0
+
+        held = LibC.fcntl(fds[0], Tunnelgeist::LibDirectory::F_DUPFD_CLOEXEC, 0)
+        raise IO::Error.from_errno("fcntl(F_DUPFD_CLOEXEC)") if held < 0
+        @held << held
 
         peer = IO::FileDescriptor.new(fds[1])
         peer.sync = true
