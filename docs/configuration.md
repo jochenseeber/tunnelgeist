@@ -126,8 +126,8 @@ traffic for any one IPv4 address to its device by making it the peer, even with
 not checked. The first item that fails is named in the error reply, such as
 `address 10.99.0.1/24 not allowed` or `route 10.99.0.0/16 not allowed`. The
 process making the request is judged, not the one that created the device, so a
-process that holds another's key can only add what its own configurations
-allow.
+process that holds another's device descriptor can only add what its own
+configurations allow.
 
 A configuration for one VPN client, kept in `clients.d/vpn.json`:
 

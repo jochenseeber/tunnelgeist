@@ -17,7 +17,7 @@ describe TunnelgeistDaemon do
       @files.each_value { |file| file.close unless file.closed? }
     end
 
-    test "the kernel's ping arrives on the device and the route follows the key's owner" do
+    test "the kernel's ping arrives on the device and its route goes when removed" do
       device = create_device
       file = open_device(device)
 
@@ -51,20 +51,14 @@ describe TunnelgeistDaemon do
       end
     end
 
-    test "a new device that takes the name of a closed one is changed with its own descriptor only" do
+    test "a new device that takes the name of a closed one is changed with its own descriptor" do
       old = create_device
       old_name = old.name
-      old_key = old.key
       open_device(old).close
       wait_until { !interface?(old_name) }
 
       fresh = create_device(old_name)
       assert(fresh.name == old_name)
-
-      error = raised(Tunnelgeist::Client::Error) do
-        client.handle(old_name, key: old_key).add_route(Tunnelgeist::Prefix.parse("10.79.2.0/24"))
-      end
-      assert(error.reason.no_descriptor?)
 
       assert(!routed_via?("10.79.2.1", name: fresh.name))
       fresh.add_route(Tunnelgeist::Prefix.parse("10.79.2.0/24"))
@@ -75,7 +69,7 @@ describe TunnelgeistDaemon do
       first = create_device
       second = create_device
       route = Tunnelgeist::Prefix.parse("10.79.3.0/24")
-      request = Tunnelgeist::Protocol::AddRoute.new(name: first.name, key: first.key, route: route)
+      request = Tunnelgeist::Protocol::AddRoute.new(name: first.name, route: route)
 
       socket = UNIXSocket.new(socket_path)
       reply = begin

@@ -7,9 +7,9 @@ describe Tunnelgeist::Protocol do
   {% if flag?(:darwin) %}
     alias Protocol = Tunnelgeist::Protocol
 
-    KEY_TEXT = "Kq3vZ8xY1wT5uR7oP2nM4lK6jH9gF0dS_aB-cDeFgHi"
-    KEY      = Tunnelgeist::Key.new(KEY_TEXT)
-    UTUN7    = Tunnelgeist::InterfaceName.new("utun7")
+    # Client text an error must never quote, since it ends up in the log.
+    CLIENT_TEXT = "Kq3vZ8xY1wT5uR7oP2nM4lK6jH9gF0dS_aB-cDeFgHi"
+    UTUN7       = Tunnelgeist::InterfaceName.new("utun7")
 
     def parse_error(line : String) : String
       raised(Protocol::Error) { Protocol::Request.parse(line) }.message.to_s
@@ -20,11 +20,11 @@ describe Tunnelgeist::Protocol do
     end
 
     def route_json(*, op = "add_route", route = "10.99.0.0/16", name = "utun7", extra = "") : String
-      %({"version": 1, "op": "#{op}", "name": "#{name}", "key": "#{KEY_TEXT}", "route": "#{route}"#{extra}})
+      %({"version": 1, "op": "#{op}", "name": "#{name}", "route": "#{route}"#{extra}})
     end
 
     def address_json(*, op = "add_address", address = %({"address": "fd77::2", "prefix": 64})) : String
-      %({"version": 1, "op": "#{op}", "name": "utun7", "key": "#{KEY_TEXT}", "address": #{address}})
+      %({"version": 1, "op": "#{op}", "name": "utun7", "address": #{address}})
     end
 
     test "constants carry the limits of the specification" do
@@ -34,7 +34,7 @@ describe Tunnelgeist::Protocol do
       assert(Protocol::MTU_RANGE == (1_280..65_535))
       assert(Protocol::MAX_ADDRESSES == 16)
       assert(Protocol::MAX_ROUTES == 64)
-      assert(Protocol::UNKNOWN_DEVICE == "unknown device or wrong key")
+      assert(Protocol::UNKNOWN_DEVICE == "unknown device")
     end
 
     test "parses the create request of UP2" do
@@ -57,7 +57,6 @@ describe Tunnelgeist::Protocol do
     test "parses an IPv6 address without a peer" do
       request = Protocol::Request.parse(address_json).as(Protocol::AddAddress)
       assert(request.name == UTUN7)
-      assert(request.key == KEY)
       assert(request.address.address.address == "fd77::2")
       assert(request.address.peer.nil?)
     end
@@ -75,10 +74,10 @@ describe Tunnelgeist::Protocol do
       requests = [
         Protocol::Create.new(name: UTUN7, mtu: 1_400, addresses: [v4, v6], routes: [prefix]),
         Protocol::Create.new(name: nil, mtu: 65_535, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix),
-        Protocol::AddAddress.new(name: UTUN7, key: KEY, address: v4),
-        Protocol::RemoveAddress.new(name: UTUN7, key: KEY, address: v6),
-        Protocol::AddRoute.new(name: UTUN7, key: KEY, route: prefix),
-        Protocol::RemoveRoute.new(name: UTUN7, key: KEY, route: prefix),
+        Protocol::AddAddress.new(name: UTUN7, address: v4),
+        Protocol::RemoveAddress.new(name: UTUN7, address: v6),
+        Protocol::AddRoute.new(name: UTUN7, route: prefix),
+        Protocol::RemoveRoute.new(name: UTUN7, route: prefix),
       ] of Protocol::Request
       requests.each do |request|
         assert(Protocol::Request.parse(request.to_json) == request)
@@ -87,8 +86,8 @@ describe Tunnelgeist::Protocol do
 
     test "to_json writes the shapes of UP2 and UP3" do
       v6 = Tunnelgeist::Address.new(Socket::IPAddress.new("fd77::2", 0), prefix: 64)
-      line = Protocol::AddAddress.new(name: UTUN7, key: KEY, address: v6).to_json
-      assert(line == %({"version":1,"op":"add_address","name":"utun7","key":"#{KEY_TEXT}","address":{"address":"fd77::2","prefix":64}}))
+      line = Protocol::AddAddress.new(name: UTUN7, address: v6).to_json
+      assert(line == %({"version":1,"op":"add_address","name":"utun7","address":{"address":"fd77::2","prefix":64}}))
     end
 
     test "rejects malformed JSON" do
@@ -108,16 +107,16 @@ describe Tunnelgeist::Protocol do
       assert(raised(Protocol::Error) { Protocol::Reply.parse(%({"ok": true} 1)) }.message.to_s.starts_with?("malformed JSON"))
     end
 
-    test "malformed JSON names the position but never the text, so a key cannot reach the log" do
-      key = KEY_TEXT
+    test "malformed JSON names the position but never the text, so client text cannot reach the log" do
+      text = CLIENT_TEXT
 
-      unquoted = parse_error(%({"version": 1, "op": "add_route", "key": #{key}}))
-      colonless = parse_error(%({"key" "#{key}"}))
-      reply = raised(Protocol::Error) { Protocol::Reply.parse(%({"ok": true, "key" "#{key}"})) }.message.to_s
+      unquoted = parse_error(%({"version": 1, "op": "add_route", "name": #{text}}))
+      colonless = parse_error(%({"name" "#{text}"}))
+      reply = raised(Protocol::Error) { Protocol::Reply.parse(%({"ok": true, "error" "#{text}"})) }.message.to_s
 
       [unquoted, colonless, reply].each do |message|
-        assert(!message.includes?(key))
-        assert(!message.includes?(key[0, 8]))
+        assert(!message.includes?(text))
+        assert(!message.includes?(text[0, 8]))
         assert(message.matches?(/\Amalformed JSON at line \d+, column \d+\z/))
       end
     end
@@ -170,7 +169,7 @@ describe Tunnelgeist::Protocol do
       assert(Protocol::RemoveRoute.operation == Protocol::Operation::RemoveRoute)
 
       prefix = Tunnelgeist::Prefix.parse("10.99.0.0/16")
-      built = Protocol::RemoveRoute.new(name: UTUN7, key: KEY, route: prefix)
+      built = Protocol::RemoveRoute.new(name: UTUN7, route: prefix)
       assert(built.operation == Protocol::Operation::RemoveRoute)
       assert(built.version == Protocol::VERSION)
       assert(Protocol::Request.parse(route_json).version == Protocol::VERSION)
@@ -192,12 +191,12 @@ describe Tunnelgeist::Protocol do
       assert(raised(Protocol::Error) { Protocol::Create.from_json(create_json(extra: %(, "evil": 1))) }.field! == "evil")
     end
 
-    test "from_json raises only Protocol::Error and never quotes a key" do
-      after = raised(Protocol::Error) { Protocol::AddRoute.from_json(%(#{route_json} "#{KEY_TEXT}")) }
-      unquoted = raised(Protocol::Error) { Protocol::AddRoute.from_json(%({"version": 1, "op": "add_route", "name": "utun7" "#{KEY_TEXT}"})) }
+    test "from_json raises only Protocol::Error and never quotes the line" do
+      after = raised(Protocol::Error) { Protocol::AddRoute.from_json(%(#{route_json} "#{CLIENT_TEXT}")) }
+      unquoted = raised(Protocol::Error) { Protocol::AddRoute.from_json(%({"version": 1, "op": "add_route", "name": "utun7" "#{CLIENT_TEXT}"})) }
       [after, unquoted].each do |error|
         assert(error.message.to_s.matches?(/\Amalformed JSON at line \d+, column \d+\z/))
-        assert(!error.message.to_s.includes?(KEY_TEXT[0, 8]))
+        assert(!error.message.to_s.includes?(CLIENT_TEXT[0, 8]))
         assert(error.field.nil?)
       end
 
@@ -220,7 +219,7 @@ describe Tunnelgeist::Protocol do
       assert(reply.message == "reply is not valid UTF-8")
     end
 
-    test "rejects a key given twice in any object, naming it" do
+    test "rejects a field given twice in any object, naming it" do
       cases = {
         "version" => %({"version": "x", "op": "add_route", "version": 1}),
         "op"      => route_json(extra: %(, "op": "add_route")),
@@ -253,13 +252,13 @@ describe Tunnelgeist::Protocol do
     end
 
     test "from_json with a root member is refused with Protocol::Error, without reading the line" do
-      line = %({"r": #{route_json}} "#{KEY_TEXT}")
+      line = %({"r": #{route_json}} "#{CLIENT_TEXT}")
       [
         raised(Protocol::Error) { Protocol::AddRoute.from_json(line, "r") },
         raised(Protocol::Error) { Protocol::AddRoute.from_json(IO::Memory.new(line), "r") },
         raised(Protocol::Error) { Protocol::Reply.from_json(%({"r": {"ok": true}}), "r") },
       ].each do |error|
-        assert(!error.message.to_s.includes?(KEY_TEXT[0, 8]))
+        assert(!error.message.to_s.includes?(CLIENT_TEXT[0, 8]))
         assert(error.message.to_s.includes?("root"))
         assert(error.field.nil?)
       end
@@ -287,7 +286,7 @@ describe Tunnelgeist::Protocol do
     end
 
     test "Reply.from_json reads what Reply.parse reads" do
-      line = %({"ok":true,"name":"utun7","key":"#{KEY_TEXT}"})
+      line = %({"ok":true,"name":"utun7"})
       assert(Protocol::Reply.from_json(line) == Protocol::Reply.parse(line))
     end
 
@@ -295,15 +294,6 @@ describe Tunnelgeist::Protocol do
       assert(parse_error(create_json(name: %("eth0"))) == %(invalid device name "eth0"))
       assert(parse_error(route_json(name: "utun")) == %(invalid device name "utun"))
       assert(parse_error(route_json(name: "utun1x")) == %(invalid device name "utun1x"))
-    end
-
-    test "rejects a key that is not 43 characters of A-Za-z0-9_- without quoting it" do
-      [KEY_TEXT[0, 42], "#{KEY_TEXT}x", KEY_TEXT.sub('K', '+'), ""].each do |text|
-        error = raised(Protocol::Error) { Protocol::Request.parse(route_json.sub(KEY_TEXT, text)) }
-
-        assert(error.message == "invalid key: not 43 characters of A-Za-z0-9_-")
-        assert(error.field! == "key")
-      end
     end
 
     test "rejects an MTU outside 1280..65535" do
@@ -378,14 +368,12 @@ describe Tunnelgeist::Protocol do
       line = create_json(addresses: %([{"address": "10.77.0.2", "prefix": 24, "peer": 5}]))
       assert(parse_error(line) == "field peer must be a string or null")
       assert(parse_error(address_json(address: %("fd77::2"))) == "address must be a JSON object")
-      assert(parse_error(route_json(route: "10.0.0.0/8").sub(%("#{KEY_TEXT}"), "7")) == "field key must be a string")
-      assert(parse_error(%({"version": 1, "op": "add_route", "name": "utun7", "key": "#{KEY_TEXT}", "route": [1]})) == "field route must be a string")
+      assert(parse_error(%({"version": 1, "op": "add_route", "name": "utun7", "route": [1]})) == "field route must be a string")
     end
 
     test "rejects missing fields" do
-      assert(parse_error(%({"version": 1, "op": "add_route", "name": "utun7", "route": "10.0.0.0/8"})) == "missing field key")
-      assert(parse_error(%({"version": 1, "op": "add_route", "key": "#{KEY_TEXT}", "route": "10.0.0.0/8"})) == "missing field name")
-      assert(parse_error(%({"version": 1, "op": "add_route", "name": "utun7", "key": "#{KEY_TEXT}"})) == "missing field route")
+      assert(parse_error(%({"version": 1, "op": "add_route", "route": "10.0.0.0/8"})) == "missing field name")
+      assert(parse_error(%({"version": 1, "op": "add_route", "name": "utun7"})) == "missing field route")
       assert(parse_error(%({"version": 1, "op": "create", "addresses": [], "routes": []})) == "missing field mtu")
       assert(parse_error(%({"version": 1, "op": "create", "mtu": 1500, "routes": []})) == "missing field addresses")
       line = create_json(addresses: %([{"prefix": 24}]))
@@ -436,15 +424,13 @@ describe Tunnelgeist::Protocol do
       raised(NilAssertionError) { unnamed.name! }
     end
 
-    test "Reply#name!, #key! and #error! return the value and raise when there is none" do
-      full = Tunnelgeist::Protocol::Reply.new(ok: false, name: UTUN7, key: KEY, error: "boom")
+    test "Reply#name! and #error! return the value and raise when there is none" do
+      full = Tunnelgeist::Protocol::Reply.new(ok: false, name: UTUN7, error: "boom")
       empty = Tunnelgeist::Protocol::Reply.new(ok: true)
 
       assert(full.name! == UTUN7)
-      assert(full.key! == KEY)
       assert(full.error! == "boom")
       raised(NilAssertionError) { empty.name! }
-      raised(NilAssertionError) { empty.key! }
       raised(NilAssertionError) { empty.error! }
     end
 
@@ -471,45 +457,16 @@ describe Tunnelgeist::Protocol do
     test "Reply omits null fields" do
       assert(Protocol::Reply.new(ok: true).to_json == %({"ok":true}))
       assert(Protocol::Reply.new(ok: false, error: "boom").to_json == %({"ok":false,"error":"boom"}))
-      assert(Protocol::Reply.new(ok: true, name: UTUN7, key: KEY).to_json == %({"ok":true,"name":"utun7","key":"#{KEY_TEXT}"}))
+      assert(Protocol::Reply.new(ok: true, name: UTUN7).to_json == %({"ok":true,"name":"utun7"}))
     end
 
     test "Reply parses what it writes" do
       replies = [
         Protocol::Reply.new(ok: true),
-        Protocol::Reply.new(ok: true, name: UTUN7, key: KEY),
-        Protocol::Reply.new(ok: false, error: "unknown device or wrong key"),
+        Protocol::Reply.new(ok: true, name: UTUN7),
+        Protocol::Reply.new(ok: false, error: "unknown device"),
       ]
       replies.each { |reply| assert(Protocol::Reply.parse(reply.to_json) == reply) }
-    end
-
-    test "inspect and to_s of a device request and a reply do not show the key" do
-      key = KEY_TEXT
-      address = Tunnelgeist::Address.new(Socket::IPAddress.new("fd77::2", 0), prefix: 64)
-      route = Tunnelgeist::Prefix.parse("10.99.0.0/16")
-      requests = [
-        Protocol::AddAddress.new(name: UTUN7, key: KEY, address: address),
-        Protocol::RemoveAddress.new(name: UTUN7, key: KEY, address: address),
-        Protocol::AddRoute.new(name: UTUN7, key: KEY, route: route),
-        Protocol::RemoveRoute.new(name: UTUN7, key: KEY, route: route),
-      ] of Protocol::DeviceRequest
-      requests.each do |request|
-        [request.inspect, request.to_s, [request].inspect].each do |text|
-          assert(!text.includes?(key))
-          assert(text.includes?("key=[REDACTED]"))
-          assert(text.includes?(%(name="utun7")))
-        end
-      end
-      assert(requests[2].inspect.includes?("route=10.99.0.0/16"))
-      assert(requests[0].inspect.includes?("fd77::2"))
-
-      reply = Protocol::Reply.new(ok: true, name: UTUN7, key: KEY)
-      [reply.inspect, reply.to_s].each do |text|
-        assert(!text.includes?(key))
-        assert(text.includes?("key=[REDACTED]"))
-      end
-      assert(Protocol::Reply.new(ok: false, error: "boom").inspect.includes?(%(error="boom")))
-      assert(!Protocol::Reply.new(ok: false, error: "boom").inspect.includes?("REDACTED"))
     end
 
     test "Reply.parse raises Protocol::Error for bad input" do
@@ -520,7 +477,6 @@ describe Tunnelgeist::Protocol do
       assert(raised(Protocol::Error) { Protocol::Reply.parse(%({"name": "x"})) }.message == "missing field ok")
       assert(raised(Protocol::Error) { Protocol::Reply.parse(%({"ok": true, "name": 5})) }.message == "field name must be a string or null")
       assert(raised(Protocol::Error) { Protocol::Reply.parse(%({"ok": true, "name": "en0"})) }.field! == "name")
-      assert(raised(Protocol::Error) { Protocol::Reply.parse(%({"ok": true, "key": "short"})) }.field! == "key")
     end
   {% end %}
 end

@@ -60,8 +60,8 @@ compressed:
 ```
 
 The judgment uses the peer making the request, not the one that created the
-device: a process that holds a device's descriptor and key may only add what
-its own configurations allow.
+device: a process that holds a device's descriptor may only add what its own
+configurations allow.
 
 ## Changing a device
 
@@ -92,16 +92,21 @@ kernel cannot remove the interface and give its name to a new device, so the
 command changes the device the client holds. Once the daemon has closed it, the
 client's own copy again decides how long the device lives.
 
+The descriptor is the only credential a change needs: any process the daemon
+admits that holds it may change the device, within what its own client
+configurations allow. A client lets another process change its device by
+passing it the descriptor, over a Unix socket or by inheritance.
+
 ## Operations
 
 ### create
 
 Opens a utun device, brings it up, adds the addresses and routes and replies
-with its name and key. `name` is `"utunN"` or `null` to let the kernel pick the
-first free one; `mtu` is 1280 to 65535; `addresses` and `routes` may be empty.
-An address is `{"address": "10.77.0.2", "prefix": 24, "peer": "10.77.0.1"}`
-(IPv4, with a peer) or `{"address": "fd77::2", "prefix": 64}` (IPv6, without
-one). A route is a prefix such as `"10.99.0.0/16"`.
+with its name. `name` is `"utunN"` or `null` to let the kernel pick the first
+free one; `mtu` is 1280 to 65535; `addresses` and `routes` may be empty. An
+address is `{"address": "10.77.0.2", "prefix": 24, "peer": "10.77.0.1"}` (IPv4,
+with a peer) or `{"address": "fd77::2", "prefix": 64}` (IPv6, without one). A
+route is a prefix such as `"10.99.0.0/16"`.
 
 Request:
 
@@ -114,7 +119,7 @@ Reply:
 
 <!-- dprint-ignore -->
 ```json
-{"ok":true,"name":"utun7","key":"Kq3vZ8xY1wT5uR7oP2nM4lK6jH9gF0dS_aB-cDeFgHi"}
+{"ok":true,"name":"utun7"}
 ```
 
 The reply carries the open device as one file descriptor, attached to the same
@@ -130,7 +135,7 @@ Request:
 
 <!-- dprint-ignore -->
 ```json
-{"version":1,"op":"add_address","name":"utun7","key":"Kq3vZ8xY1wT5uR7oP2nM4lK6jH9gF0dS_aB-cDeFgHi","address":{"address":"fd77::2","prefix":64}}
+{"version":1,"op":"add_address","name":"utun7","address":{"address":"fd77::2","prefix":64}}
 ```
 
 Reply:
@@ -144,7 +149,7 @@ Reply:
 
 <!-- dprint-ignore -->
 ```json
-{"version":1,"op":"remove_address","name":"utun7","key":"Kq3vZ8xY1wT5uR7oP2nM4lK6jH9gF0dS_aB-cDeFgHi","address":{"address":"fd77::2","prefix":64}}
+{"version":1,"op":"remove_address","name":"utun7","address":{"address":"fd77::2","prefix":64}}
 ```
 
 `remove_address` accepts only an address the daemon added for that device.
@@ -156,7 +161,7 @@ Request:
 
 <!-- dprint-ignore -->
 ```json
-{"version":1,"op":"add_route","name":"utun7","key":"Kq3vZ8xY1wT5uR7oP2nM4lK6jH9gF0dS_aB-cDeFgHi","route":"10.99.0.0/16"}
+{"version":1,"op":"add_route","name":"utun7","route":"10.99.0.0/16"}
 ```
 
 Reply:
@@ -170,7 +175,7 @@ Reply:
 
 <!-- dprint-ignore -->
 ```json
-{"version":1,"op":"remove_route","name":"utun7","key":"Kq3vZ8xY1wT5uR7oP2nM4lK6jH9gF0dS_aB-cDeFgHi","route":"10.99.0.0/16"}
+{"version":1,"op":"remove_route","name":"utun7","route":"10.99.0.0/16"}
 ```
 
 `remove_route` accepts only a route the daemon added for that device. A route
@@ -186,8 +191,6 @@ request it rejects with an error reply.
 
 - `version` is the integer 1; `op` is one of the five operations above.
 - `name` is `utun` followed by a unit number without leading zeros.
-- `key` is 43 characters of `A-Za-z0-9_-`. Any other text gets the error
-  `invalid key: not 43 characters of A-Za-z0-9_-`, which never quotes the text.
 - `mtu` is an integer from 1280 to 65535.
 - Addresses and routes are IPv4 or IPv6 literals without a zone (`%`). A route
   is `ADDRESS/LENGTH` with a length that has no leading zero and no host bits
@@ -203,22 +206,12 @@ A failed `ifconfig` or `route` turns into an error reply that carries the
 program, its exit status and its standard error. A client error never stops the
 daemon.
 
-## Identical errors
+## Unknown devices
 
-An unknown device name, a name the daemon did not create and a wrong key of the
-right form all get the same reply, so the reply does not reveal which
-interfaces exist:
+A change whose descriptor passes the checks above but names a device the daemon
+does not know, one it did not create or one that is gone, gets:
 
 <!-- dprint-ignore -->
 ```json
-{"ok":false,"error":"unknown device or wrong key"}
+{"ok":false,"error":"unknown device"}
 ```
-
-## Keys
-
-The key is 32 random bytes from the system's secure generator, encoded as
-unpadded base64url: 43 characters. A change needs it and the device's
-descriptor: any process the daemon admits that holds both may change that
-device, within what its own client configurations allow, which lets a client
-pass both to another process. The daemon compares keys in constant time and
-never writes one to its log; a client should not either.

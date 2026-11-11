@@ -2,7 +2,6 @@
 
 require "json"
 require "../interface_name"
-require "../key"
 require "./common"
 require "./document/outcome"
 require "./error"
@@ -15,7 +14,7 @@ module Tunnelgeist
     # The reply of the daemon: `{"ok": true, …}` or
     # `{"ok": false, "error": "MESSAGE"}`, read and written with
     # `JSON::Serializable`. Fields that are nil are left out.
-    record Reply, ok : Bool, name : InterfaceName? = nil, key : Key? = nil, error : String? = nil do
+    record Reply, ok : Bool, name : InterfaceName? = nil, error : String? = nil do
       include JSON::Serializable
       include StrictFields
 
@@ -23,8 +22,6 @@ module Tunnelgeist
       # `false`; `parse` checks it with `Document::Outcome` first.
       @[JSON::Field(converter: Tunnelgeist::Protocol::TextConverter(Tunnelgeist::InterfaceName).new("name", nullable: true))]
       @name : InterfaceName?
-      @[JSON::Field(converter: Tunnelgeist::Protocol::TextConverter(Tunnelgeist::Key).new("key", nullable: true))]
-      @key : Key?
       @[JSON::Field(converter: Tunnelgeist::Protocol::TextConverter(String).new("error", nullable: true))]
       @error : String?
 
@@ -64,26 +61,9 @@ module Tunnelgeist
         @name || raise NilAssertionError.new("the reply has no name")
       end
 
-      # The device key; raises `NilAssertionError` when the reply has none.
-      def key! : Key
-        @key || raise NilAssertionError.new("the reply has no key")
-      end
-
       # The error message; raises `NilAssertionError` when the reply has none.
       def error! : String
         @error || raise NilAssertionError.new("the reply has no error")
-      end
-
-      # The key never reaches a log line or `pp` output (UC5), so the
-      # default `inspect` and `to_s` of a record are replaced.
-      def inspect(io : IO) : Nil
-        io << "#<Reply ok=" << @ok << " name=" << @name.try(&.to_s).inspect
-        io << " key=" << (@key ? "[REDACTED]" : "nil") << " error=" << @error.inspect << ">"
-      end
-
-      # Same as `inspect`.
-      def to_s(io : IO) : Nil
-        inspect(io)
       end
     end
   end

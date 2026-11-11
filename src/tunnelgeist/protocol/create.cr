@@ -16,7 +16,7 @@ require "./text_converter"
 module Tunnelgeist
   module Protocol
     # Asks the daemon to create a utun device, configure it with the addresses
-    # and routes and reply with its name, its key and its descriptor.
+    # and routes and reply with its name and its descriptor.
     struct Create < Request
       # The requested device name; nil leaves the choice to the daemon, and
       # the wire carries null.

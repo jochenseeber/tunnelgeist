@@ -24,7 +24,7 @@ end
 
 puts "#{device.name} is up with descriptor #{device.fd}"
 
-# Each change is one request that carries the device's descriptor and key.
+# Each change is one request that carries the device's descriptor.
 device.add_route(Tunnelgeist::Prefix.parse("192.168.65.128/25"))
 device.remove_route(Tunnelgeist::Prefix.parse("192.168.65.128/25"))
 

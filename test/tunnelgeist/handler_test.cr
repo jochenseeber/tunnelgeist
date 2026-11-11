@@ -14,7 +14,7 @@ describe TunnelgeistHandler do
 
     test "a change that carries the end of a Unix socket pair is refused as no utun device and runs nothing" do
       registry = Tunnelgeist::Registry.new
-      key = registry.register(UTUN9, index: 21_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+      registry.register(UTUN9, index: 21_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
       commands = [] of Array(String)
       handler = Tunnelgeist::Handler.new(registry,
         create_device: ->(_name : Tunnelgeist::InterfaceName?, _mtu : Int32) : Tunnelgeist::Device::Utun { raise "no device in this test" },
@@ -26,7 +26,7 @@ describe TunnelgeistHandler do
       stranger, other = UNIXSocket.pair
       client, server = UNIXSocket.pair
       begin
-        request = Protocol::AddRoute.new(name: UTUN9, key: key, route: Tunnelgeist::Prefix.parse("10.98.0.0/16"))
+        request = Protocol::AddRoute.new(name: UTUN9, route: Tunnelgeist::Prefix.parse("10.98.0.0/16"))
         Tunnelgeist::FdPassing.send(client, data: "#{request.to_json}\n".to_slice, fd: stranger.fd)
         stranger.close
         handler.handle(server)

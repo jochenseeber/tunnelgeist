@@ -111,20 +111,25 @@ describe TunnelgeistDepartureWatcher do
       with_pipe_watcher do |fixture|
         utun7 = Tunnelgeist::InterfaceName.new("utun7")
         utun8 = Tunnelgeist::InterfaceName.new("utun8")
-        departed = fixture.registry.register(utun7, index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
-        kept = fixture.registry.register(utun8, index: 13_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+        fixture.registry.register(utun7, index: 12_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+        fixture.registry.register(utun8, index: 13_u32, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
         fixture.writer.write(event(DepartureWatcher::LibKernelEvent::KEV_DL_IF_DETACHED))
 
-        removed = eventually { fixture.registry.with_entry(utun7, key: departed) { } == Tunnelgeist::Registry::Rejection.unknown_device }
+        removed = eventually { unknown?(fixture, name: utun7) }
         assert(removed)
-        assert(fixture.registry.with_entry(utun8, key: kept, &.index) == 13_u32)
+        assert(fixture.registry.with_entry(utun8, &.index) == 13_u32)
         assert(fixture.backend.entries.any?(&.message.==("departure name=utun7 removed")))
       end
     end
 
-    # Registers a device *name* without addresses or routes; returns its key.
-    def entry(fixture : PipeWatcher, *, name : Tunnelgeist::InterfaceName, index : UInt32) : Tunnelgeist::Key
+    # Registers a device *name* without addresses or routes.
+    def entry(fixture : PipeWatcher, *, name : Tunnelgeist::InterfaceName, index : UInt32) : Nil
       fixture.registry.register(name, index: index, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix) { }
+    end
+
+    # Whether the registry has no entry for *name*.
+    def unknown?(fixture : PipeWatcher, *, name : Tunnelgeist::InterfaceName) : Bool
+      fixture.registry.with_entry(name) { } == Tunnelgeist::Registry::Rejection.unknown_device
     end
 
     # How often the watcher logged the removal of *name*.
@@ -132,14 +137,14 @@ describe TunnelgeistDepartureWatcher do
       fixture.backend.entries.count(&.message.==("departure name=#{name} removed"))
     end
 
-    # Lets the watcher's fiber run, then sends a departure of utun8 and
-    # waits until it removed *marker*: events are handled in order, so by
-    # then the watcher has handled everything written before. False when
-    # *marker* is still registered after a second.
-    def settle(fixture : PipeWatcher, *, marker : Tunnelgeist::Key) : Bool
+    # Lets the watcher's fiber run, then sends a departure of utun8, the
+    # marker entry, and waits until it removed that: events are handled in
+    # order, so by then the watcher has handled everything written before.
+    # False when utun8 is still registered after a second.
+    def settle(fixture : PipeWatcher) : Bool
       sleep 20.milliseconds
       fixture.writer.write(event(DepartureWatcher::LibKernelEvent::KEV_DL_IF_DETACHED, unit: 8_u32))
-      eventually { fixture.registry.with_entry(Tunnelgeist::InterfaceName.new("utun8"), key: marker) { } == Tunnelgeist::Registry::Rejection.unknown_device }
+      eventually { unknown?(fixture, name: Tunnelgeist::InterfaceName.new("utun8")) }
     end
 
     test "start makes the event source non-blocking and drain on an empty source returns at once" do
@@ -171,14 +176,14 @@ describe TunnelgeistDepartureWatcher do
         utun7 = Tunnelgeist::InterfaceName.new("utun7")
         Fiber.yield
         entry(fixture, name: utun7, index: 30_u32)
-        marker = entry(fixture, name: Tunnelgeist::InterfaceName.new("utun8"), index: 31_u32)
+        entry(fixture, name: Tunnelgeist::InterfaceName.new("utun8"), index: 31_u32)
         # The old device's event is buffered, and the new device registers
         # under the recycled name before the watcher reads it.
         fixture.writer.write(event(DepartureWatcher::LibKernelEvent::KEV_DL_IF_DETACHED, unit: 7_u32))
-        fresh = entry(fixture, name: utun7, index: 30_u32)
+        entry(fixture, name: utun7, index: 32_u32)
 
-        assert(settle(fixture, marker: marker))
-        assert(fixture.registry.with_entry(utun7, key: fresh) { } == Tunnelgeist::Registry::Rejection.unknown_device)
+        assert(settle(fixture))
+        assert(unknown?(fixture, name: utun7))
         assert(removals(fixture, name: "utun7") == 1)
       end
     end
@@ -188,15 +193,15 @@ describe TunnelgeistDepartureWatcher do
         utun7 = Tunnelgeist::InterfaceName.new("utun7")
         Fiber.yield
         entry(fixture, name: utun7, index: 30_u32)
-        marker = entry(fixture, name: Tunnelgeist::InterfaceName.new("utun8"), index: 31_u32)
+        entry(fixture, name: Tunnelgeist::InterfaceName.new("utun8"), index: 31_u32)
         # Nothing yields between the write and the drain, so the watcher's
         # fiber has not read the event.
         fixture.writer.write(event(DepartureWatcher::LibKernelEvent::KEV_DL_IF_DETACHED, unit: 7_u32))
         fixture.watcher.drain
-        fresh = entry(fixture, name: utun7, index: 30_u32)
+        entry(fixture, name: utun7, index: 32_u32)
 
-        assert(settle(fixture, marker: marker))
-        assert(fixture.registry.with_entry(utun7, key: fresh, &.index) == 30_u32)
+        assert(settle(fixture))
+        assert(fixture.registry.with_entry(utun7, &.index) == 32_u32)
         assert(removals(fixture, name: "utun7") == 1)
         assert(received?(fixture.failures, within: 20.milliseconds).nil?)
       end

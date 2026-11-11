@@ -2,7 +2,6 @@
 
 require "json"
 require "../interface_name"
-require "../key"
 require "../prefix"
 require "./common"
 require "./error"
@@ -12,7 +11,7 @@ module Tunnelgeist
   module Protocol
     # :nodoc:
     # The `JSON::Field` converter of a field the wire carries as a string: a
-    # `String`, or an `InterfaceName`, a `Key`, a route `Prefix` or an
+    # `String`, or an `InterfaceName`, a route `Prefix` or an
     # `Operation` parsed from it. Every error is an `Error` about the field.
     struct TextConverter(T)
       # The converter of the field *field*. *nullable* says whether the field
@@ -45,10 +44,6 @@ module Tunnelgeist
         Protocol.parse_name(text)
       end
 
-      private def decode(text : String, *, type _type : Key.class) : Key
-        Protocol.parse_key(text)
-      end
-
       private def decode(text : String, *, type _type : Prefix.class) : Prefix
         Protocol.parse_route(text, field: @field)
       end
@@ -63,7 +58,7 @@ module Tunnelgeist
         value.wire
       end
 
-      private def encode(value : String | InterfaceName | Key | Prefix) : String
+      private def encode(value : String | InterfaceName | Prefix) : String
         value.to_s
       end
     end

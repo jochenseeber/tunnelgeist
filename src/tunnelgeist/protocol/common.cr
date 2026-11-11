@@ -3,7 +3,6 @@
 require "json"
 require "../device"
 require "../interface_name"
-require "../key"
 require "../prefix"
 require "./error"
 
@@ -25,9 +24,9 @@ module Tunnelgeist
     MAX_ADDRESSES = 16
     # The most routes a create request may carry.
     MAX_ROUTES = 64
-    # The error text for a device that is unknown or whose key does not match;
-    # one text, so a reply does not tell the two apart.
-    UNKNOWN_DEVICE = "unknown device or wrong key"
+    # The error text for a device the daemon does not know: one it did not
+    # create, or one that is gone.
+    UNKNOWN_DEVICE = "unknown device"
 
     # The socket the daemon listens on and the client connects to unless told
     # otherwise.
@@ -65,12 +64,6 @@ module Tunnelgeist
     # Parses the device name *text*, `utunN`.
     def self.parse_name(text : String) : InterfaceName
       InterfaceName.parse?(text) || raise Error.new("invalid device name #{text.inspect}", field: "name")
-    end
-
-    # Parses the key *text*. The error leaves the text out: it may be a key
-    # with a typo, and the message ends up in the log and the reply (UC5).
-    def self.parse_key(text : String) : Key
-      Key.parse?(text) || raise Error.new("invalid key: not 43 characters of A-Za-z0-9_-", field: "key")
     end
 
     # Parses a route, which must have no host bits set (UP4).

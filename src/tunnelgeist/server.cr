@@ -55,7 +55,7 @@ module Tunnelgeist
     # The next connection, or nil once the listener is closed. Any other
     # accept failure (`EMFILE`, `ENFILE`, `ECONNABORTED`, ...) is logged and
     # retried after a growing pause: a client must not be able to stop the
-    # daemon and so discard every key.
+    # daemon and so forget every device.
     private def accept : UNIXSocket?
       backoff = ACCEPT_BACKOFF
       loop do

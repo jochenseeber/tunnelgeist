@@ -7,20 +7,18 @@ require "./prefix"
 require "./address"
 require "./fd_passing"
 require "./interface_name"
-require "./key"
 require "./protocol"
 require "./client/device"
 require "./client/error"
 require "./client/exchange"
-require "./client/handle"
 require "./client/reply_line"
 
 module Tunnelgeist
   # The client of the root daemon `tunnelgeist` (TA2). An unprivileged
   # program asks it for a utun device, receives the descriptor over the
   # Unix socket and later adds or removes addresses and routes, sending
-  # the descriptor and the key of the device with each change. The client
-  # does not wrap the descriptor: it belongs to the caller.
+  # the descriptor of the device with each change. The client does not wrap
+  # the descriptor: it belongs to the caller.
   #
   # Every call opens its own connection and exchanges one request line
   # and one reply line. This file does not require anything of the
@@ -58,21 +56,12 @@ module Tunnelgeist
       fd = exchange.fd
 
       device_name = reply.name
-      key = reply.key
-      unless device_name && key && fd
+      unless device_name && fd
         LibC.close(fd) if fd
         raise Error.new("tunnelgeist returned no device", reason: Error::Reason::NoDevice)
       end
 
-      Device.new(self, name: device_name, key: key, mtu: mtu, fd: fd)
-    end
-
-    # The handle of the device *name* made earlier, with its *key*. A handle
-    # holds no descriptor, and the daemon changes a device only for a
-    # request that carries the device's descriptor, so the changes of the
-    # handle raise `Error` with reason `NoDescriptor`.
-    def handle(name : InterfaceName, *, key : Key) : Handle
-      Handle.new(self, name: name, key: key)
+      Device.new(self, name: device_name, mtu: mtu, fd: fd)
     end
 
     # Sends *request* with the device's descriptor *fd* attached, in the same

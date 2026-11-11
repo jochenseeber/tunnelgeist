@@ -8,13 +8,13 @@ require "./registry"
 
 module Tunnelgeist
   # Removes a device from the registry when its interface goes away (UA5,
-  # UA6), so the next client that gets the recycled unit `utunN` does not
-  # find a key that still works. The removal is unconditional: Darwin can
-  # reuse the interface index together with the unit, so a matching index
-  # does not prove the entry's device is still alive, and keeping the entry
-  # would fail open. When a new `create` took the name before the event was
-  # read, that device loses its key, and its client's next change gets
-  # `unknown device or wrong key` and must create a device again.
+  # UA6), so the next device that gets the recycled unit `utunN` does not
+  # find the entry of the previous one, with its addresses and routes. The
+  # removal is unconditional: Darwin can reuse the interface index together
+  # with the unit, so a matching index does not prove the entry's device is
+  # still alive, and keeping the entry would fail open. When a new `create` took the name before the event was
+  # read, that device loses its entry, and its client's next change gets
+  # `unknown device` and must create a device again.
   #
   # The design names the routing socket's `RTM_IFANNOUNCE` message, but that
   # is FreeBSD's: macOS declares neither it nor `struct if_announcemsghdr`
@@ -57,7 +57,7 @@ module Tunnelgeist
 
     # *on_failure* runs with the reason when the watcher stops on its own
     # (a read error, or the socket ending). The daemon must stop then: it
-    # would no longer notice departures, and a restart makes every key
+    # would no longer notice departures, and a restart makes every device
     # unknown, which fails closed.
     # *open_events* opens the source of kernel events, one event per read;
     # by default the kernel event socket. The specs replace it.
@@ -110,8 +110,8 @@ module Tunnelgeist
     # call and returns; it never waits for an event. The handler calls it
     # between creating a device and registering it. A failure, such as the
     # source having ended, reaches *on_failure* as in the watcher's fiber
-    # and is not raised: *on_failure* stops the daemon, and every key with
-    # it. Does nothing before `start`.
+    # and is not raised: *on_failure* stops the daemon, which forgets every
+    # device. Does nothing before `start`.
     def drain : Nil
       io = @io
       return unless io

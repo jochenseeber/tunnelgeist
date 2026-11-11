@@ -129,7 +129,6 @@ describe TunnelgeistClient do
         device = Client.new(daemon.path).create(mtu: 1_280)
         begin
           assert(device.name == UTUN9)
-          assert(device.key.to_s.size == 43)
           assert(device.mtu == 1_280)
           flags = LibC.fcntl(device.fd, LibC::F_GETFD)
           assert(flags != -1)
@@ -173,54 +172,7 @@ describe TunnelgeistClient do
       end
     end
 
-    test "a handle cannot change its device and asks the daemon nothing" do
-      with_daemon do |daemon|
-        device = Client.new(daemon.path).create
-        begin
-          handles = [device.to_handle, Client.new(daemon.path).handle(device.name, key: device.key)]
-          prefix = Tunnelgeist::Prefix.parse("10.89.0.0/16")
-          address = Tunnelgeist::Address.new(Socket::IPAddress.new("fd77::2", 0), prefix: 64)
-          before = daemon.commands.size
-
-          handles.each do |handle|
-            assert(!handle.is_a?(Client::Device))
-            errors = [
-              raised(Client::Error) { handle.add_route(prefix) },
-              raised(Client::Error) { handle.remove_route(prefix) },
-              raised(Client::Error) { handle.add_address(address) },
-              raised(Client::Error) { handle.remove_address(address) },
-            ]
-            errors.each do |error|
-              assert(error.reason.no_descriptor?)
-              assert(error.message == "a handle cannot change utun9: a change needs the device's descriptor")
-            end
-          end
-          assert(daemon.commands.size == before)
-          assert(daemon.verified.empty?)
-        ensure
-          LibC.close(device.fd)
-        end
-      end
-    end
-
-    test "inspect and to_s of a device and a handle do not show the key" do
-      with_daemon do |daemon|
-        device = Client.new(daemon.path).create
-        begin
-          [device, device.to_handle].each do |item|
-            [item.inspect, item.to_s, [item].inspect].each do |text|
-              assert(!text.includes?(device.key.to_s))
-              assert(text.includes?("key=[REDACTED]"))
-              assert(text.includes?(%(name="utun9")))
-            end
-          end
-        ensure
-          LibC.close(device.fd)
-        end
-      end
-    end
-
-    test "a device the daemon no longer knows raises Client::Error with the unknown device text" do
+    test "a device the daemon does not know raises Client::Error with the unknown device text" do
       with_daemon do |daemon|
         device = Client.new(daemon.path).create
         begin
@@ -368,7 +320,7 @@ describe TunnelgeistClient do
           break unless socket
 
           socket.gets
-          socket.puts(%({"ok":true,"name":"utun9","key":"#{"k" * 43}"}))
+          socket.puts(%({"ok":true,"name":"utun9"}))
           socket.close
         end
       end

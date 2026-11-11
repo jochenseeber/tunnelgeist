@@ -9,7 +9,6 @@ require "./commands"
 require "./device"
 require "./fd_passing"
 require "./interface_name"
-require "./key"
 require "./protocol"
 require "./command_runner"
 require "./handler/admitted"
@@ -30,7 +29,7 @@ module Tunnelgeist
   #
   # `handle` never raises: the daemon runs it in one fiber per connection
   # and a client error must not stop it. Every failure becomes an error
-  # reply and one log line, which never carries a key (UC5).
+  # reply and one log line.
   class Handler
     # The failed check of a peer outside the main group.
     private GROUP_REFUSED = Refusal.new(reason: :group)
@@ -194,7 +193,7 @@ module Tunnelgeist
       fd = device.fd
       name = device.name
       begin
-        key = configure(peer: peer, name: name, request: request)
+        configure(peer: peer, name: name, request: request)
       rescue error
         LibC.close(fd)
         # Logged here, where the name the kernel chose is known.
@@ -203,10 +202,11 @@ module Tunnelgeist
       end
 
       begin
-        FdPassing.send(socket, data: reply_bytes(Protocol::Reply.new(ok: true, name: name, key: key)), fd: fd)
+        FdPassing.send(socket, data: reply_bytes(Protocol::Reply.new(ok: true, name: name)), fd: fd)
         @log.info { "#{describe_peer(peer)} op=create name=#{name} ok" }
       rescue error
-        # The client never got the descriptor, so nobody can use the key.
+        # The client never got the descriptor, so nobody can change the
+        # device, and closing it below removes the interface.
         @registry.remove(name)
         @log.warn { "#{describe_peer(peer)} op=create name=#{name} failed: reply not sent: #{error.message}" }
       ensure
@@ -215,11 +215,10 @@ module Tunnelgeist
     end
 
     # Runs the commands for a new device *name*, drains the departure
-    # events and registers it; returns the key. An entry still registered
-    # for *name* is stale, since the kernel only hands out a free unit: it
-    # replaces it and logs that at warn, with both interface indexes and no
-    # key (UA6, UC5).
-    private def configure(*, peer : Peer, name : InterfaceName, request : Protocol::Create) : Key
+    # events and registers it. An entry still registered for *name* is
+    # stale, since the kernel only hands out a free unit: it replaces it and
+    # logs that at warn, with both interface indexes (UA6).
+    private def configure(*, peer : Peer, name : InterfaceName, request : Protocol::Create) : Nil
       run!(Commands.up(name))
       request.addresses.each { |address| run!(Commands.add_address(address, name: name)) }
       request.routes.each { |route| run!(Commands.add_route(route, name: name)) }
@@ -250,7 +249,7 @@ module Tunnelgeist
                        request : Protocol::DeviceRequest, line : RequestLine) : Nil
       refused = begin
         pin(line, peer: peer, request: request)
-        @registry.with_entry(request.name, key: request.key) do |entry|
+        @registry.with_entry(request.name) do |entry|
           index = @interface_index.call(entry.name)
           if index == 0 || index != entry.index
             @registry.remove(entry.name)

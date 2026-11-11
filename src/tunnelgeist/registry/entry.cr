@@ -2,7 +2,6 @@
 
 require "../address"
 require "../interface_name"
-require "../key"
 require "../prefix"
 require "../protocol/common"
 require "./rejection"
@@ -16,14 +15,11 @@ module Tunnelgeist
       getter name : InterfaceName
       # The kernel's interface index.
       getter index : UInt32
-      # The bearer key of the device.
-      getter key : Key
 
       # Copies *addresses* and *routes*. Raises `ArgumentError` when two of
       # *addresses* have one local address: the kernel keeps one alias per
       # local address, so the entry could not tell them apart.
-      def initialize(*, @name : InterfaceName, @index : UInt32, @key : Key,
-                     addresses : Array(Address), routes : Array(Prefix))
+      def initialize(*, @name : InterfaceName, @index : UInt32, addresses : Array(Address), routes : Array(Prefix))
         addresses.each_with_index do |address, index|
           if addresses.first(index).any?(&.same_local?(address))
             raise ArgumentError.new("address #{address.address.address} listed twice")
@@ -31,18 +27,6 @@ module Tunnelgeist
         end
         @addresses = addresses.dup
         @routes = routes.dup
-      end
-
-      # The key never reaches a log line (UC5), so the default `inspect`
-      # and `to_s` are replaced.
-      def inspect(io : IO) : Nil
-        io << "#<Entry name=" << name.to_s.inspect << " index=" << index << " key=[REDACTED] addresses=" <<
-          @addresses.size << " routes=" << @routes.size << ">"
-      end
-
-      # Same text as `inspect`, so the key stays out of it too.
-      def to_s(io : IO) : Nil
-        inspect(io)
       end
 
       # Why *address* cannot be added: the device has an alias with its local

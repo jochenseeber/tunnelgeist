@@ -41,34 +41,30 @@ puts "#{device.name} is up"
 ```
 
 `create` returns a `Tunnelgeist::Client::Device` with the interface `name` (a
-`Tunnelgeist::InterfaceName`), a secret `key` (a `Tunnelgeist::Key`), the `mtu`
-and `fd`, the open utun descriptor. The descriptor belongs to the caller, who
-closes it; closing it removes the interface. It is blocking and has
-close-on-exec set. Each packet on it starts with a 4-byte address family
-header, as on any utun device. The address is the kernel's side of the
-interface; for IPv4 it takes a peer, the other side's address, and for IPv6
-none. `create` also takes a `name` (`Tunnelgeist::InterfaceName.new("utun7")`;
-by default any free unit). The device has `add_address`, `remove_address`,
-`add_route` and `remove_route`; each is one request that carries the device's
-descriptor and key, and the daemon removes only what it added. The daemon
-checks that the descriptor is the device's and holds it while it changes the
-device, so the device cannot go away in the middle of a change; the descriptor
-stays open in the caller.
+`Tunnelgeist::InterfaceName`), the `mtu` and `fd`, the open utun descriptor.
+The descriptor belongs to the caller, who closes it; closing it removes the
+interface. It is blocking and has close-on-exec set. Each packet on it starts
+with a 4-byte address family header, as on any utun device. The address is the
+kernel's side of the interface; for IPv4 it takes a peer, the other side's
+address, and for IPv6 none. `create` also takes a `name`
+(`Tunnelgeist::InterfaceName.new("utun7")`; by default any free unit). The
+device has `add_address`, `remove_address`, `add_route` and `remove_route`;
+each is one request that carries the device's descriptor, and the daemon
+removes only what it added. The daemon checks that the descriptor is the
+device's and holds it while it changes the device, so the device cannot go away
+in the middle of a change; the descriptor stays open in the caller.
 
-## Handles and keys
+## Sharing a device
 
-`client.handle`, given a device's name and key, and `device.to_handle` make a
-`Tunnelgeist::Client::Handle`: the name and key without the descriptor. A
-handle cannot change its device. The daemon changes a device only for a request
-that carries the device's descriptor, so the four change operations of a handle
-raise `Tunnelgeist::Client::Error` with reason `NoDescriptor` and send nothing;
-only the `Tunnelgeist::Client::Device` that `create` returned changes the
-device. `to_s` of a name or a key gives its text, and `inspect` of a key hides
-it.
+Holding the descriptor is what lets a process change the device. To let another
+process change it, pass it the descriptor, over a Unix socket
+(`Tunnelgeist::FdPassing.send`) or by inheritance. That process sends its
+changes with the descriptor attached, as
+[Changing a device](protocol.md#changing-a-device) describes, and the daemon
+judges them by that process's own client configurations.
 
-`InterfaceName.new` and `Key.new` raise `ArgumentError` for text that is not
-`utunN` or not a key; `parse?` returns nil instead. The key stops working when
-the device is gone or the daemon restarts.
+`InterfaceName.new` raises `ArgumentError` for text that is not `utunN`;
+`InterfaceName.parse?` returns nil instead. `to_s` of a name gives its text.
 
 ## Errors
 
@@ -91,8 +87,6 @@ Every failure raises `Tunnelgeist::Client::Error`, an `IO::Error` whose
   for the device's (see [Changing a device](protocol.md#changing-a-device)), or
   a failed command.
 - `NoDevice`: the reply to `create` carried no device.
-- `NoDescriptor`: a `Handle` was asked for a change, which needs the device's
-  descriptor; nothing was sent.
 
 ## Without the daemon
 

@@ -138,8 +138,8 @@ which runs `Tunnelgeist::CLI` with the real streams and `SUDO_USER`, and
 whole files, never by a conditional inside a component.
 
 A nested type lives in the directory of its namespace, one type per file:
-`Protocol::Create` in `protocol/create.cr`, `Client::Handle` in
-`client/handle.cr`. A file requires the file of its superclass; a parent file
+`Protocol::Create` in `protocol/create.cr`, `Client::Device` in
+`client/device.cr`. A file requires the file of its superclass; a parent file
 requires its nested types, except a nested type that subclasses the parent.
 
 A nested file also requires every file whose constants or methods it uses, the
@@ -147,12 +147,10 @@ parent's included, so that it works as the only file a program requires.
 Constants and helpers that several nested types share live in a file of their
 own, such as `protocol/common.cr`, and not in the parent's file. When requiring
 the parent at the top would load a subclass of the nested type before the type
-exists, the nested file requires the parent at its end. `client/handle.cr`
-needs nothing of `client.cr`, and `client/device.cr`, whose `Client::Device`
-subclasses `Client::Handle` and calls `Client#exchange`, requires `client.cr`
-and `client/handle.cr` at its top. A superclass that names its subclasses only
-inside method bodies, as `Protocol::Request.parse` does, does not require them;
-their files require it.
+exists, the nested file requires the parent at its end. `client/device.cr`,
+whose `Client::Device` calls `Client#exchange`, requires `client.cr` at its
+top. A superclass that names its subclasses only inside method bodies, as
+`Protocol::Request.parse` does, does not require them; their files require it.
 
 The lists below name the files of the top-level types, which bring their nested
 types along.
@@ -168,8 +166,7 @@ The library, which a program that depends on the shard gets with
 `require "tunnelgeist"`:
 
 - `address`, `prefix`: the `Address` record and the strict `Prefix` parser.
-- `interface_name`, `key`: the `InterfaceName` and `Key` value types, each
-  checked where it is parsed; `Key.generate` makes a new key.
+- `interface_name`: the `InterfaceName` value type, checked where it is parsed.
 - `commands`: the `ifconfig` and `route` argument vectors.
 - `device` (with its bindings in `device/lib_utun`): opens a utun device as
   root, and reads the interface name of a utun descriptor.
@@ -186,7 +183,7 @@ The library, which a program that depends on the shard gets with
   internals and marked `:nodoc:`. An annotation names its converter in full,
   from `Tunnelgeist::`: `JSON::Serializable#to_json` looks it up from its own
   namespace.
-- `client`: `Tunnelgeist::Client`, with `Device`, `Handle` and `Error`.
+- `client`: `Tunnelgeist::Client`, with `Device` and `Error`.
 - `version`.
 
 The daemon: `src/bin/tunnelgeist_macos.cr` requires `cli`, which requires what
@@ -201,12 +198,12 @@ the daemon needs, and no library file requires any of these:
   configuration it writes when there is none.
 - `server`, `handler`, `registry`, `departure_watcher` (with its bindings in
   `departure_watcher/lib_kernel_event`), `command_runner` (with
-  `inherited_descriptors`): the accept loop, the request handler, the devices
-  and keys, and the watcher that drops a device when its interface goes away.
-  `handler/admitted` pairs an admitted peer with its admission, which judges
-  the items of its request, and `handler/request_line` reads the request line
-  with the descriptors that came with it and pins the device a change names
-  with its descriptor.
+  `inherited_descriptors`): the accept loop, the request handler, the registry
+  of the devices, and the watcher that drops a device when its interface goes
+  away. `handler/admitted` pairs an admitted peer with its admission, which
+  judges the items of its request, and `handler/request_line` reads the request
+  line with the descriptors that came with it and pins the device a change
+  names with its descriptor.
 - `peer`, `membership`, `signature_policy`, `config`, `authorizer`,
   `entitlement`, `refusal`, and their bindings `lib_system`, `lib_bsm`,
   `lib_cf` and `lib_security`: the peer checks. `config` is the parsed

@@ -166,9 +166,9 @@ module Tunnelgeist
       Listener.new(server: server, path: config.socket)
     end
 
-    # A watcher that stops would miss departures and leave keys working on
-    # recycled units, so a failure runs the block and closes *listener*,
-    # which stops the daemon (fail closed).
+    # A watcher that stops would miss departures and leave the entries of
+    # gone devices on recycled units, so a failure runs the block and closes
+    # *listener*, which stops the daemon (fail closed).
     private def self.build_watcher(registry : Registry, *, listener : UNIXServer, log : Log, &failed : ->) : DepartureWatcher
       DepartureWatcher.new(registry, log: log.for("departure"), on_failure: ->(_reason : String) do
         failed.call
