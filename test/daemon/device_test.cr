@@ -71,18 +71,54 @@ describe TunnelgeistDaemon do
       route = Tunnelgeist::Prefix.parse("10.79.3.0/24")
       request = Tunnelgeist::Protocol::AddRoute.new(name: first.name, route: route)
 
-      socket = UNIXSocket.new(socket_path)
-      reply = begin
-        Tunnelgeist::FdPassing.send(socket, data: "#{request.to_json}\n".to_slice, fd: second.fd)
-        socket.read_timeout = 5.seconds
-        Tunnelgeist::Protocol::Reply.parse(socket.gets.to_s)
-      ensure
-        socket.close
-      end
+      reply = reply_of(send_change(request, fd: second.fd))
 
       assert(reply == Tunnelgeist::Protocol::Reply.new(ok: false, error: "descriptor is #{second.name}, not #{first.name}"))
       assert(!routed_via?("10.79.3.1", name: first.name))
       assert(!routed_via?("10.79.3.1", name: second.name))
+    end
+
+    # A change against the last close of its device (RF1.3): the client
+    # sends two changes of device A, each with A's descriptor, closes its
+    # own copy at once and asks for a device of A's name, B, until the
+    # kernel frees the name. The descriptors in flight, and then the
+    # daemon's copies, keep A and its name until the daemon has made both
+    # changes and closed them, so the changes land on A, go away with it,
+    # and B starts without them. A daemon that found the device by its name
+    # alone could run a change after A was gone and B had its name, and B
+    # would get A's address or route.
+    #
+    # The test cannot make the daemon run its command at a chosen moment,
+    # so it cannot prove the daemon's side of the race: it repeats the
+    # sequence and asks for B as early as the kernel allows, which a daemon
+    # that did not hold the device would fail in some runs, not in all.
+    test "a change sent as the device's last descriptor closes lands on that device, not on the next of its name" do
+      3.times do
+        first = create_device(addresses: [ipv4_address("10.77.4.1", peer: "10.77.4.2")],
+          routes: [] of Tunnelgeist::Prefix)
+        name = first.name
+        added = ipv4_address("10.77.5.1", peer: "10.77.5.2")
+        route = Tunnelgeist::Prefix.parse("10.79.4.0/24")
+        pending = [
+          send_change(Tunnelgeist::Protocol::AddAddress.new(name: name, address: added), fd: first.fd),
+          send_change(Tunnelgeist::Protocol::AddRoute.new(name: name, route: route), fd: first.fd),
+        ]
+        open_device(first).close
+
+        second = create_when_free(name)
+        replies = pending.map { |socket| reply_of(socket) }
+
+        # The daemon held A until both changes were done, so A was still
+        # registered and both went through.
+        assert(replies.all?(&.ok))
+        assert(second.name == name)
+        assert(!address?("10.77.4.1", name: second.name))
+        assert(!address?("10.77.5.1", name: second.name))
+        assert(!routed_via?("10.79.4.1", name: second.name))
+
+        open_device(second).close
+        wait_until { !interface?(name) }
+      end
     end
 
     test "the daemon refuses an address outside its configuration and creates no device" do
@@ -185,11 +221,53 @@ describe TunnelgeistDaemon do
       device
     end
 
+    # Asks the daemon for a device named *name*, with no address and no
+    # route, again and again for at most 5 s while the kernel still gives
+    # the name to an interface, which makes the daemon refuse it.
+    def create_when_free(name : Tunnelgeist::InterfaceName) : Tunnelgeist::Client::Device
+      started = Time.instant
+      loop do
+        begin
+          device = create_device(name, addresses: [] of Tunnelgeist::Address, routes: [] of Tunnelgeist::Prefix)
+          return device
+        rescue error : Tunnelgeist::Client::Error
+          raise error unless error.reason.refused? && started.elapsed < 5.seconds
+        end
+        sleep 5.milliseconds
+      end
+    end
+
+    # Sends *request* with the descriptor *fd*, as `Client::Device` does,
+    # and returns the connection without waiting for the reply, so a test
+    # can act while the daemon serves the request; `reply_of` reads it.
+    def send_change(request : Tunnelgeist::Protocol::DeviceRequest, *, fd : Int32) : UNIXSocket
+      socket = UNIXSocket.new(socket_path)
+      begin
+        Tunnelgeist::FdPassing.send(socket, data: "#{request.to_json}\n".to_slice, fd: fd)
+      rescue error
+        socket.close
+        raise error
+      end
+      socket
+    end
+
+    # The reply the daemon sends on *socket* within 5 s; closes *socket*.
+    def reply_of(socket : UNIXSocket) : Tunnelgeist::Protocol::Reply
+      socket.read_timeout = 5.seconds
+      Tunnelgeist::Protocol::Reply.parse(socket.gets.to_s)
+    ensure
+      socket.close
+    end
+
     # 10.77.3.1/24 with the peer 10.77.3.2, inside the address rule of the
     # configuration `rake test:daemon` writes.
     def test_address : Tunnelgeist::Address
-      Tunnelgeist::Address.new(
-        Socket::IPAddress.new("10.77.3.1", 0), prefix: 24, peer: Socket::IPAddress.new("10.77.3.2", 0))
+      ipv4_address("10.77.3.1", peer: "10.77.3.2")
+    end
+
+    # The IPv4 address *local*/24 with the peer *peer*.
+    def ipv4_address(local : String, *, peer : String) : Tunnelgeist::Address
+      Tunnelgeist::Address.new(Socket::IPAddress.new(local, 0), prefix: 24, peer: Socket::IPAddress.new(peer, 0))
     end
 
     # Whether `route -n get` sends *destination* out of the interface *name*.
