@@ -1,12 +1,16 @@
 require "json"
 require "../test_helper"
 require "../../src/tunnelgeist/cli"
+require "../../src/tunnelgeist/config/directory/missing"
+require "../../src/tunnelgeist/config/error"
+require "../../src/tunnelgeist/config/trusted_directory"
 require "../../src/tunnelgeist/lib_system"
 require "./support/temporary_directory"
 
 # The command line of `tunnelgeist` (UA5, UA9) where it reads the system:
-# the default configuration path, the system's groups, the root-ness of the
-# process and the repository's commit through `git`.
+# the default configuration path and the directories above it, the system's
+# groups, the root-ness of the process and the repository's commit through
+# `git`.
 describe TunnelgeistCLI do
   {% if flag?(:darwin) %}
     include TunnelgeistTemporaryDirectory
@@ -77,12 +81,34 @@ describe TunnelgeistCLI do
       assert(Command.from_argument?("--version") == Command::Version)
     end
 
-    test "serve without --config loads the default path and fails naming it when it is absent" do
-      skip("the default configuration exists") if File.exists?(Tunnelgeist::Config::DEFAULT_PATH)
+    # The error loading the default configuration gives as this process,
+    # found the way the loader finds it; nil when it reads the file.
+    def default_path_error : Tunnelgeist::Config::Error?
+      path = Tunnelgeist::Config::DEFAULT_PATH
+      names = path.split('/').reject!(&.empty?)
+      name = names.pop
+      Tunnelgeist::Config::TrustedDirectory.open(names, owner: Tunnelgeist::LibSystem.geteuid) do |directory|
+        directory.read(name)
+      end
+      nil
+    rescue error : Tunnelgeist::Config::Directory::Missing
+      Tunnelgeist::Config::Error.new("does not exist", file: Tunnelgeist::Config::DEFAULT_PATH)
+    rescue error : Tunnelgeist::Config::Error
+      error
+    end
+
+    test "serve without --config loads the default path and fails with what the walk to it finds" do
+      # Whether the default path or a directory above it exists, and passes
+      # the checks, depends on the machine: a missing one makes the default
+      # path missing, another refusal is named as the walk finds it.
+      path = Tunnelgeist::Config::DEFAULT_PATH
+      expected = default_path_error
+      skip("the default configuration can be read") unless expected
       result = run("serve")
 
+      assert(expected.file == path || expected.file == "/" || path.starts_with?("#{expected.file}/"))
       assert(result.status == 1)
-      assert(result.error == "tunnelgeist: #{Tunnelgeist::Config::DEFAULT_PATH}: does not exist\n")
+      assert(result.error == "tunnelgeist: #{expected.message}\n")
     end
 
     test "serve with a configuration file that does not exist fails with the error" do
