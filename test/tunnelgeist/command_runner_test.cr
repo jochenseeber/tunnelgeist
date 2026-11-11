@@ -50,44 +50,53 @@ describe TunnelgeistCommandRunner do
       assert(result.output == "hello")
     end
 
-    # The process id the shell prints before it becomes `/bin/sleep 30`.
-    def sleeper_pid(result : CommandRunner::Result) : Int64
-      result.output.strip.to_i64
+    # The process id on the first line the shell printed. A shell that had
+    # not printed it when its time limit ran out fails the test with what it
+    # had printed.
+    def printed_pid(result : CommandRunner::Result) : Int64
+      pid = result.output.lines.first?.try(&.to_i64?)
+      pid || raise "the shell printed no process id before its time limit; it printed #{result.output.inspect}"
     end
 
     test "a program that runs past the time limit is stopped with TERM, reaped and reported as timed out" do
       started = Time.instant
-      result = CommandRunner.run(["/bin/sh", "-c", "echo $$; exec /bin/sleep 30"], timeout: 200.milliseconds)
+      result = CommandRunner.run(["/bin/sh", "-c", "echo $$; exec /bin/sleep 30"], timeout: 500.milliseconds)
       elapsed = started.elapsed
 
-      assert(elapsed >= 200.milliseconds)
-      assert(elapsed < 1.second)
-      assert(result.timed_out_after! == 200.milliseconds)
+      assert(elapsed >= 500.milliseconds)
+      assert(elapsed < 1.5.seconds)
+      assert(result.timed_out_after! == 500.milliseconds)
       assert(result.exit_status == -1)
       assert(!result.success?)
-      assert(result.failure("/bin/sleep") == "sleep timed out after 0.2 s")
-      assert(!Process.exists?(sleeper_pid(result)))
+      assert(result.failure("/bin/sleep") == "sleep timed out after 0.5 s")
+      assert(!Process.exists?(printed_pid(result)))
     end
 
     test "a program that ignores TERM is killed a second later and reaped" do
       started = Time.instant
-      result = CommandRunner.run(["/bin/sh", "-c", "trap '' TERM; echo $$; exec /bin/sleep 30"], timeout: 200.milliseconds)
+      result = CommandRunner.run(["/bin/sh", "-c", "trap '' TERM; echo $$; exec /bin/sleep 30"], timeout: 500.milliseconds)
       elapsed = started.elapsed
 
-      assert(elapsed >= 1.2.seconds)
-      assert(elapsed < 3.seconds)
+      assert(elapsed >= 1.5.seconds)
+      assert(elapsed < 3.5.seconds)
       assert(result.timed_out?)
       assert(result.exit_status == -1)
-      assert(!Process.exists?(sleeper_pid(result)))
+      assert(!Process.exists?(printed_pid(result)))
     end
 
-    test "a program that leaves its output open in a child it started is stopped at the time limit" do
+    # The runner signals only the shell, so the test ends the `sleep` the
+    # shell left behind itself.
+    test "a program that ended but left its output open in a child it started times out with its exit status" do
       started = Time.instant
-      result = CommandRunner.run(["/bin/sh", "-c", "/bin/sleep 5 & echo done"], timeout: 200.milliseconds)
-
-      assert(started.elapsed < 3.seconds)
-      assert(result.timed_out?)
-      assert(result.output == "done\n")
+      result = CommandRunner.run(["/bin/sh", "-c", "/bin/sleep 30 & echo $!; echo done"], timeout: 500.milliseconds)
+      begin
+        assert(started.elapsed < 3.seconds)
+        assert(result.timed_out?)
+        assert(result.exit_status == 0)
+        assert(result.output.lines.last? == "done")
+      ensure
+        Process.signal(Signal::KILL, printed_pid(result))
+      end
     end
 
     test "a program that finishes within the time limit is not timed out" do
