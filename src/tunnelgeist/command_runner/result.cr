@@ -5,14 +5,16 @@ module Tunnelgeist
     # What a program run by `CommandRunner` produced: its exit status
     # (-1 when a signal killed it), standard output and standard error, each
     # cut at the output limit, and the time limit it ran out of, nil when it
-    # finished in time.
+    # finished in time. A program that ran out of time has exit status -1
+    # when it was stopped, and keeps the status it exited with when it had
+    # ended but a process it started still held its output open.
     record Result, exit_status : Int32, output : String, error : String, timed_out_after : Time::Span? = nil do
       # Whether the program exited with status 0 within its time limit.
       def success? : Bool
         !timed_out? && exit_status == 0
       end
 
-      # Whether the program ran out of time and was stopped.
+      # Whether the program, or the output it left open, ran out of time.
       def timed_out? : Bool
         !timed_out_after.nil?
       end

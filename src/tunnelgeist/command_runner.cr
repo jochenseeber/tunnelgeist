@@ -28,8 +28,8 @@ module Tunnelgeist
     alias Run = Array(String) -> Result
 
     # The runner of the daemon, with the limits above. Standard input is
-    # the null device; a program killed by a signal, also for running out
-    # of time, reports exit status -1.
+    # the null device; a program killed by a signal, also when it is stopped
+    # for running out of time, reports exit status -1.
     def self.default : Run
       ->(argv : Array(String)) { run(argv) }
     end
@@ -41,9 +41,12 @@ module Tunnelgeist
     #
     # The run waits while `COMMAND_CONCURRENCY` other programs run. A
     # program still running after *timeout* is sent `TERM`, and `KILL` a
-    # second later, and is reaped; its result is timed out. Of each of
-    # standard output and standard error the first *output_limit* bytes are
-    # kept and the rest is read and dropped.
+    # second later, and is reaped; its result is timed out. A program that
+    # ended but left its output open in a process it started is timed out
+    # too, with the exit status it ended with. The signals reach only the
+    # program itself, not the processes it started. Of each of standard
+    # output and standard error the first *output_limit* bytes are kept and
+    # the rest is read and dropped.
     def self.run(argv : Array(String), *, input : String? = nil, timeout : Time::Span = COMMAND_TIMEOUT,
                  output_limit : Int32 = COMMAND_OUTPUT_LIMIT) : Result
       SLOTS.send(nil)
