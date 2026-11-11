@@ -18,8 +18,9 @@ comes with a Crystal client library for those programs.
 - **On demand.** launchd starts the daemon on the first request, and it exits
   after 30 idle seconds with no device open.
 - **Crystal client library.** `Tunnelgeist::Client` creates devices and changes
-  their addresses and routes; [docs/protocol.md](docs/protocol.md) describes
-  the wire protocol for clients in other languages.
+  their addresses and routes;
+  [docs/protocol.md](https://github.com/jochenseeber/tunnelgeist/blob/main/docs/protocol.md)
+  describes the wire protocol for clients in other languages.
 
 ## Usage
 
@@ -52,9 +53,14 @@ device = client.create(
 puts "#{device.name} is up" # read and write packets on device.fd
 ```
 
-The [examples](examples) directory has a complete configuration and client
-program. [docs/configuration.md](docs/configuration.md) describes the
-configuration, and [docs/client.md](docs/client.md) the client library.
+The [examples](https://github.com/jochenseeber/tunnelgeist/tree/main/examples)
+directory has a complete configuration and client program.
+[docs/configuration.md](https://github.com/jochenseeber/tunnelgeist/blob/main/docs/configuration.md)
+describes the configuration, and
+[docs/client.md](https://github.com/jochenseeber/tunnelgeist/blob/main/docs/client.md)
+the client library; the
+[API documentation](https://jochenseeber.github.io/tunnelgeist/) describes
+every public type of the latest release.
 
 ## Installation
 
@@ -66,14 +72,18 @@ sudo tunnelgeist install
 ```
 
 Then add each user who may create devices to the group `tunnelgeist`.
-[INSTALL.md](INSTALL.md) describes what `install` does, the group, building
-from source and uninstalling.
+[INSTALL.md](https://github.com/jochenseeber/tunnelgeist/blob/main/INSTALL.md)
+describes what `install` does, the group, building from source and
+uninstalling.
 
 ## Contributing
 
-See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md). Everyone taking part follows
-the [code of conduct](CODE_OF_CONDUCT.md).
+See
+[docs/CONTRIBUTING.md](https://github.com/jochenseeber/tunnelgeist/blob/main/docs/CONTRIBUTING.md).
+Everyone taking part follows the
+[code of conduct](https://github.com/jochenseeber/tunnelgeist/blob/main/CODE_OF_CONDUCT.md).
 
 ## License
 
-MIT, see [LICENSE.txt](LICENSE.txt).
+MIT, see
+[LICENSE.txt](https://github.com/jochenseeber/tunnelgeist/blob/main/LICENSE.txt).

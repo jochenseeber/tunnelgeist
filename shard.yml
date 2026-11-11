@@ -6,6 +6,9 @@ description: A root helper that creates and configures utun devices for unprivil
 authors:
   - Jochen Seeber
 
+repository: https://github.com/jochenseeber/tunnelgeist
+documentation: https://jochenseeber.github.io/tunnelgeist/
+
 crystal: ">= 1.22.0"
 
 # The Crystal toolchain the GitHub workflows install.

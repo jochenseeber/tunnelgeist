@@ -17,6 +17,7 @@ Everything in development goes through `rake`:
 | `cover`, `tunnelgeist:cover`                 | Runs the unit tests with coverage into `coverage/`.                                                                                                                                                                                    |
 | `test[pattern]`, `tunnelgeist:test[pattern]` | Runs the integration tests in `test/tunnelgeist/` (microtest), which use the system; not the daemon tests. `pattern` as for `spec`.                                                                                                    |
 | `exercise`                                   | Runs the daemon tests in `test/daemon/` with real utun devices; see [Testing](#testing). Builds the daemon, asks for your `sudo` password once, starts it as root and runs the tests as you.                                           |
+| `docs`                                       | Builds the API docs into `.tmp/docs/` with `crystal docs`; the README is their index page.                                                                                                                                             |
 | `format[check]`                              | Formats the Crystal sources in `src/`, `spec/` and `test/`; with `check`, only reports files that would change.                                                                                                                        |
 | `lint`, `lint:crystal`, `lint:spelling`      | Runs ameba over the Crystal sources and cspell over the tracked files.                                                                                                                                                                 |
 | `build`, `build:debug`, `build:release`      | Builds the `tunnelgeist` program for every build profile of the host, in both or one mode. `build:<mode>:<profile>` builds one profile.                                                                                                |
@@ -119,8 +120,8 @@ rake exercise   # starts the daemon under sudo
 ## Gates before committing
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the format check, `rake lint`,
-`rake spec` and `rake test` on a macOS runner for every branch push and pull
-request; the daemon tests below run only locally. Every Monday,
+`rake docs`, `rake spec` and `rake test` on a macOS runner for every branch
+push and pull request; the daemon tests below run only locally. Every Monday,
 `.github/workflows/scheduled.yml` runs `rake spec` and `rake test` against the
 latest Crystal release, so a new compiler that breaks tunnelgeist shows up
 without a push; run it by hand from the Actions tab to check now.
@@ -332,7 +333,11 @@ under `dist/`, and only the tap holds the filled formula.
    runs CI (`.github/workflows/ci.yml`), then on a macOS runner runs
    `rake build:release` (build, sign, notarize), `rake dist:package` and
    `rake homebrew:formula:update`, publishes the GitHub release with the
-   archive, and pushes the filled formula to the tap.
+   archive, and pushes the filled formula to the tap. For a version without a
+   suffix it then deploys the API docs to GitHub Pages
+   (`.github/workflows/docs.yml`), at
+   <https://jochenseeber.github.io/tunnelgeist/>; a prerelease leaves the last
+   release's docs in place.
 
 The workflow needs these repository secrets: `MACOS_CERTIFICATE_P12_BASE64`,
 `MACOS_CERTIFICATE_PASSWORD`, `MACOS_KEYCHAIN_PASSWORD`, `MACOS_SIGN_IDENTITY`,
@@ -342,6 +347,12 @@ The workflow needs these repository secrets: `MACOS_CERTIFICATE_P12_BASE64`,
 keychain and stores a notarytool keychain profile there from the App Store
 Connect API key, so `rake` signs and notarizes exactly as on a developer's
 machine.
+
+Publishing the docs needs two repository settings, made once in the GitHub web
+interface: under Settings → Pages, the source "GitHub Actions"; and under
+Settings → Environments → `github-pages`, a deployment rule that allows only
+`main` and tags `v*`. To publish the docs of `main` in between, such as before
+the first release, run the Docs workflow by hand from the Actions tab.
 
 ### By hand
 

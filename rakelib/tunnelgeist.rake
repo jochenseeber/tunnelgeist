@@ -6,6 +6,7 @@ require "fileutils"
 require "json"
 require "socket"
 require "tmpdir"
+require "yaml"
 
 # Project-specific tasks of this shard that the rake template does not provide.
 
@@ -40,6 +41,24 @@ namespace "examples" do
       sh environment.call, "crystal", "build", program, "-o", output, "--link-flags=#{link}"
     end
   end
+end
+
+# Where `rake docs` writes the API docs: `crystal docs` defaults to docs/, which
+# holds the project's own documents.
+DOCS_DIR = ".tmp/docs"
+CLEAN.include(DOCS_DIR)
+
+# The README is the docs' index page, so the banner it shows is copied next to
+# it; its other links are absolute. The previous output goes first, so no page
+# of a removed type is left behind. The sources skip themselves unless they are
+# compiled for macOS, so the docs are built on macOS.
+desc "Build the API docs into #{DOCS_DIR}/"
+task "docs" do
+  version = YAML.load_file("shard.yml").fetch("version")
+  FileUtils.rm_rf(DOCS_DIR)
+  sh "crystal", "docs", "--output=#{DOCS_DIR}", "--project-name=tunnelgeist", "--project-version=#{version}"
+  FileUtils.mkdir_p(File.join(DOCS_DIR, "artwork"))
+  FileUtils.cp("artwork/tunnelgeist-banner.jpg", File.join(DOCS_DIR, "artwork"))
 end
 
 namespace "lint" do

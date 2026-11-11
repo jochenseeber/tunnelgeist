@@ -69,6 +69,10 @@ jobs:
           NO_COLOR: "1"
         run: rake lint
 
+      # A change that breaks `crystal docs` fails CI instead of the release.
+      - name: Build the API docs
+        run: rake docs
+
   test:
     name: Test (macOS arm64)
     runs-on: macos-15

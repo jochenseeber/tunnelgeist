@@ -5,8 +5,9 @@ on:
     tags:
       - "v*.*.*"
 
-# Every job only reads the repository; the one job that publishes the GitHub
-# release grants itself contents: write.
+# Every job only reads the repository; the job that publishes the GitHub
+# release grants itself contents: write, and the docs job grants its workflow
+# pages: write and id-token: write to deploy to GitHub Pages.
 permissions:
   contents: read
 
@@ -159,6 +160,20 @@ jobs:
           files: artifacts/tunnelgeist-*.tar.gz
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+  # Pages shows one version of the docs, so they follow the newest release; a
+  # prerelease, whose tag has a suffix such as -rc.1, leaves the last
+  # release's docs in place. The job grants the reusable workflow its
+  # permissions, which cannot exceed the caller's.
+  docs:
+    name: Docs
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/docs.yml
 
   # The filled formula goes to the tap only; the project keeps the template
   # with placeholder version and checksums.
