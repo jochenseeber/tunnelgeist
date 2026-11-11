@@ -567,5 +567,24 @@ describe TunnelgeistRegistry do
       reserved(registry, owner: 501_u32)
       assert(reserve_refusal(registry, owner: 501_u32) == "device limit of 2 reached for uid 501")
     end
+
+    # The names of *entries*, sorted.
+    def names(entries : Array(Tunnelgeist::Registry::Entry)) : Array(String)
+      entries.map(&.name.to_s).sort!
+    end
+
+    test "entries_counting_against names the owner's entries at the per-user limit and every entry at the total" do
+      registry = Tunnelgeist::Registry.new(max_devices: 3, max_devices_per_user: 2)
+      TunnelgeistRegistrations.register(registry, ifname("utun7"), index: 12_u32, owner: 501_u32)
+
+      assert(registry.entries_counting_against(501_u32).empty?)
+      TunnelgeistRegistrations.register(registry, ifname("utun8"), index: 13_u32, owner: 501_u32)
+      assert(names(registry.entries_counting_against(501_u32)) == ["utun7", "utun8"])
+      assert(registry.entries_counting_against(502_u32).empty?)
+
+      TunnelgeistRegistrations.register(registry, ifname("utun9"), index: 14_u32, owner: 502_u32)
+      assert(names(registry.entries_counting_against(501_u32)) == ["utun7", "utun8"])
+      assert(names(registry.entries_counting_against(502_u32)) == ["utun7", "utun8", "utun9"])
+    end
   {% end %}
 end

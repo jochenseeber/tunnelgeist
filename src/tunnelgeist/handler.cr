@@ -256,7 +256,7 @@ module Tunnelgeist
         return
       end
 
-      reservation = @registry.reserve(peer.uid)
+      reservation = reserve(peer: peer, request: request)
       if reservation.is_a?(Registry::Rejection)
         fail(socket, peer: peer, operation: request.operation, name: request.name, message: reservation.message)
         return
@@ -267,6 +267,27 @@ module Tunnelgeist
       ensure
         @registry.release(reservation)
       end
+    end
+
+    # Reserves a device slot for *peer*'s user. When a device limit refuses
+    # it, the entries that hold that limit's slots are checked against the
+    # kernel first: one whose interface is gone or has another index lost
+    # its departure event, so it is removed and logged as a change that
+    # finds it removes it, and the reservation is tried once more. The
+    # lookups run outside the registry's lock.
+    private def reserve(*, peer : Peer, request : Protocol::Create) : Registry::Reservation | Registry::Rejection
+      reservation = @registry.reserve(peer.uid)
+      return reservation unless reservation.is_a?(Registry::Rejection)
+
+      removed = @registry.entries_counting_against(peer.uid).count do |entry|
+        index = @interface_index.call(entry.name)
+        gone = (index == 0 || index != entry.index) && @registry.remove(entry)
+        if gone
+          @log.info { "#{describe_peer(peer)} op=#{request.operation.wire} name=#{entry.name} removed: interface index #{entry.index} now #{index}" }
+        end
+        gone
+      end
+      removed > 0 ? @registry.reserve(peer.uid) : reservation
     end
 
     # Creates the device of *request* in the slot of *reservation*, as

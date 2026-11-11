@@ -219,9 +219,11 @@ and per user, the peer's effective user ID:
 | Devices of one user      | 16    | `create` fails with `device limit of 16 reached for uid U`        |
 
 A device counts against the user whose `create` made it from the moment the
-`create` is checked until the daemon forgets the device: when its interface
-goes away, or when its `create` fails or its reply cannot be sent. A refused
-`create` opens no device.
+`create` is checked until the kernel removes its interface, or until its
+`create` fails or its reply cannot be sent. Before the daemon refuses a
+`create` for a limit, it looks up the interfaces of the devices that count
+against that limit and forgets those the kernel no longer has, also when it
+missed their removal. A refused `create` opens no device.
 
 <!-- dprint-ignore -->
 ```json

@@ -1369,6 +1369,7 @@ describe TunnelgeistHandler do
     test "a create over the total device limit is refused before the device exists" do
       fixture = HandlerFixture.new(Tunnelgeist::Registry.new(max_devices: 1, max_devices_per_user: 1))
       TunnelgeistRegistrations.register(fixture.registry, UTUN8, index: 20_u32, owner: own_uid + 1)
+      fixture.indexes[UTUN8] = 20_u32
 
       reply = exchange(fixture, request: line(empty_create)).reply
 
@@ -1449,6 +1450,59 @@ describe TunnelgeistHandler do
       assert(!before)
       assert(reply.error == Protocol::UNKNOWN_DEVICE)
       assert(slot_free?(fixture))
+    end
+
+    # Registers utun10 to utun25 for this process's user, with the interface
+    # indexes 110 to 125, of which the fake lookup knows those *live* names.
+    def register_sixteen(fixture : HandlerFixture, *, live : Range(Int32, Int32)) : Nil
+      (10..25).each do |unit|
+        name = Tunnelgeist::InterfaceName.new("utun#{unit}")
+        TunnelgeistRegistrations.register(fixture.registry, name, index: 100_u32 + unit, owner: own_uid)
+        fixture.indexes[name] = 100_u32 + unit if live.includes?(unit)
+      end
+    end
+
+    test "a create at the user's device limit removes the user's entries whose interfaces are gone and succeeds" do
+      fixture = HandlerFixture.new
+      register_sixteen(fixture, live: 10..23)
+      fixture.indexes[Tunnelgeist::InterfaceName.new("utun24")] = 99_u32
+
+      exchanged = exchange(fixture, request: line(empty_create))
+      exchanged.fd.try { |descriptor| LibC.close(descriptor) }
+
+      assert(exchanged.reply.ok)
+      assert(fixture.registry.with_entry(Tunnelgeist::InterfaceName.new("utun24")) { } == Tunnelgeist::Registry::Rejection.unknown_device)
+      assert(fixture.registry.with_entry(Tunnelgeist::InterfaceName.new("utun25")) { } == Tunnelgeist::Registry::Rejection.unknown_device)
+      assert(fixture.registry.with_entry(Tunnelgeist::InterfaceName.new("utun23"), &.index) == 123_u32)
+      assert(fixture.logged?("op=create name=utun24 removed: interface index 124 now 99"))
+      assert(fixture.logged?("op=create name=utun25 removed: interface index 125 now 0"))
+      # 14 live entries and the new device: one slot of 16 is left.
+      assert(slot_free?(fixture))
+    end
+
+    test "a create at the user's device limit whose entries are all live is refused" do
+      fixture = HandlerFixture.new
+      register_sixteen(fixture, live: 10..25)
+
+      reply = exchange(fixture, request: line(empty_create)).reply
+
+      assert(reply == Protocol::Reply.new(ok: false, error: "device limit of 16 reached for uid #{own_uid}"))
+      assert(fixture.create_calls.empty?)
+      assert(!fixture.logged?("removed: interface index"))
+    end
+
+    test "a create at the total device limit removes any user's entries whose interfaces are gone" do
+      fixture = HandlerFixture.new(Tunnelgeist::Registry.new(max_devices: 2, max_devices_per_user: 2))
+      TunnelgeistRegistrations.register(fixture.registry, UTUN8, index: 20_u32, owner: own_uid + 1)
+      TunnelgeistRegistrations.register(fixture.registry, Tunnelgeist::InterfaceName.new("utun7"), index: 19_u32, owner: own_uid + 2)
+      fixture.indexes[UTUN8] = 20_u32
+
+      exchanged = exchange(fixture, request: line(empty_create))
+      exchanged.fd.try { |descriptor| LibC.close(descriptor) }
+
+      assert(exchanged.reply.ok)
+      assert(fixture.registry.with_entry(UTUN8, &.index) == 20_u32)
+      assert(fixture.logged?("op=create name=utun7 removed: interface index 19 now 0"))
     end
   {% end %}
 end

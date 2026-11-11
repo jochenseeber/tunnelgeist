@@ -76,6 +76,24 @@ module Tunnelgeist
       end
     end
 
+    # The entries that hold the slots of the limit that refuses *owner* a
+    # reservation now: the owner's entries when they reach
+    # `max_devices_per_user`, else every entry when the registry is full,
+    # else none. A caller that finds some of them gone from the kernel
+    # removes them and reserves again, so entries whose departure was
+    # missed do not hold slots for good. A copy, taken under the map lock.
+    def entries_counting_against(owner : UInt32) : Array(Entry)
+      @map_lock.synchronize do
+        if @slots.fetch(owner, 0) >= @max_devices_per_user
+          @entries.values.select { |entry| entry.owner == owner }
+        elsif @slots_taken >= @max_devices
+          @entries.values
+        else
+          [] of Entry
+        end
+      end
+    end
+
     # Gives the slot of *reservation* back, unless `register` used it or it
     # was released already.
     def release(reservation : Reservation) : Nil
