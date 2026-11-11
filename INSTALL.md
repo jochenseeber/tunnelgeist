@@ -64,19 +64,26 @@ Two options change this:
 
 ## Directory checks
 
-`install` stops with a message, before it creates or writes anything, when one
-of the directories it writes in is a symbolic link, is not owned by root or can
-be written by anyone else. These directories are `/usr/local`,
-`/usr/local/libexec`, the configuration directory and `clients.d`, and for a
-directory that does not exist yet the nearest one above it. Every directory
-above those up to `/` must pass the same check, since another user could
-otherwise replace the program or the configuration. `install` refuses a
+`install` stops with a message, before it creates or writes anything, when a
+directory it writes in, or any directory above one up to `/`, is a symbolic
+link, is not owned by root, can be written by anyone else, or has an ACL entry
+that lets anyone else write, an entry it inherited included; an ACL entry that
+only lets others read or list, or denies them, is fine. These directories are
+`/usr/local/libexec`, the configuration directory, `clients.d` and
+`/Library/LaunchDaemons`, and for a directory that does not exist yet the
+directories above it. `install` walks from `/` down, opening each directory
+from the one above it without following a symbolic link, creates a missing
+directory in the one it checked last, owned by root and mode 0755, and writes
+each file through the directory it checked, so another user cannot replace the
+program, the configuration or the property list along the way. The message
+names the directory and why, such as
+`/usr/local/libexec: grants write access through its ACL`. `install` refuses a
 `/usr/local` that a Homebrew installation gave to your user for that reason.
 `/etc` is a symbolic link to `/private/etc`, so name a configuration there as
-`--config /private/etc/tunnelgeist/config.json`. The daemon checks the same
-directories from `/` down each time it loads the configuration, the directories
-of the included files too, and also refuses one whose ACL lets anyone else
-write; see [Ownership](docs/configuration.md#ownership).
+`--config /private/etc/tunnelgeist/config.json`. `ls -led DIRECTORY` shows a
+directory's ACL and `sudo chmod -N DIRECTORY` removes it. The daemon checks the
+same way each time it loads the configuration, the directories of the included
+files too; see [Ownership](docs/configuration.md#ownership).
 
 ## Group membership
 

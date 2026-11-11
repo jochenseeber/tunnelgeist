@@ -42,6 +42,10 @@ module Tunnelgeist
     getter path : String
     # The trusted user besides root.
     getter owner : UInt32
+    # The descriptor of the directory, for calls relative to it, such as
+    # `install`'s creating and renaming; this directory keeps it and
+    # closes it in `close`.
+    getter fd : Int32
 
     protected def initialize(@fd : Int32, *, @path : String, @owner : UInt32)
     end
@@ -85,6 +89,17 @@ module Tunnelgeist
         LibC.close(fd)
       end
       TrustedFile.new(path: path, text: text)
+    end
+
+    # Whether something, a symbolic link included, is at the plain name
+    # *name* in this directory.
+    def exists?(name : String) : Bool
+      stat = uninitialized LibC::Stat
+      return true if LibDirectory.fstatat(@fd, plain(name), pointerof(stat), LibC::AT_SYMLINK_NOFOLLOW) == 0
+
+      errno = Errno.value
+      raise Refusal.new("cannot be examined: #{errno.message}", path: path_of(name)) unless errno.enoent?
+      false
     end
 
     # The names in this directory, `.` and `..` left out, in the order

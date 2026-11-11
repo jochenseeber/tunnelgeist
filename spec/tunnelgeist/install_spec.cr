@@ -9,8 +9,8 @@ require "./support/temporary_directory"
 # The LaunchDaemon property list `install` writes (UA9, UB1), its starter
 # configuration and paths, the refusal of `install` and `uninstall` as
 # non-root, and `uninstall` against a temporary directory with a recording
-# runner. `install` as root checks the real directories above the ones it
-# writes in up to `/`, so it is an integration test, as are `plutil` and the
+# runner. `install` as root walks the real directories from `/` down to the
+# ones it writes in, so it is an integration test, as are `plutil` and the
 # real configuration loader.
 describe TunnelgeistInstall do
   {% if flag?(:darwin) %}
@@ -75,10 +75,11 @@ describe TunnelgeistInstall do
     end
 
     # A temporary installation layout: a fresh temporary directory with mode
-    # 0755, *root* with mode 0755 below it, the binary below that, the
-    # property list in a directory of its own, the configuration two missing
-    # directories down, the socket the configuration names, and a file
-    # standing in for the running executable.
+    # 0755, `usr` with mode 0755 below it, the binary one missing directory
+    # below that, the property list in a directory of its own, the
+    # configuration two missing directories down, the socket the
+    # configuration names, and a file standing in for the running
+    # executable.
     class Layout
       getter directory : String
       getter paths : Install::Paths
@@ -94,8 +95,7 @@ describe TunnelgeistInstall do
         Dir.mkdir_p(File.join(@directory, "LaunchDaemons"), 0o755)
         @paths = Install::Paths.new(binary: File.join(root, "libexec", "tunnelgeist"),
           plist: File.join(@directory, "LaunchDaemons", "daemon.plist"),
-          config: File.join(@directory, "etc", "tunnelgeist", "config.json"), log: File.join(@directory, "t.log"),
-          root: root)
+          config: File.join(@directory, "etc", "tunnelgeist", "config.json"), log: File.join(@directory, "t.log"))
         @socket = File.join(@directory, "t.sock")
         @executable = File.join(@directory, "executable")
         File.write(@executable, "the daemon")
@@ -223,8 +223,7 @@ describe TunnelgeistInstall do
 
     test "plist keeps the XML special characters of a path" do
       binary = "/opt/a & b <x>/tunnelgeist"
-      paths = Install::Paths.new(binary: binary, plist: "/tmp/tg.plist", config: "/tmp/tg.json", log: "/tmp/tg.log",
-        root: "/opt")
+      paths = Install::Paths.new(binary: binary, plist: "/tmp/tg.plist", config: "/tmp/tg.json", log: "/tmp/tg.log")
       xml = Install.new(paths: paths).plist(config_path: "/tmp/a & b.json", socket: "/tmp/<tg>.sock", group_gid: 20_u32)
       listeners = entries(entries(top_dict(xml)["Sockets"])["Listeners"])
 
@@ -437,16 +436,6 @@ describe TunnelgeistInstall do
       paths = Install::Paths.default(config: "etc/../tg/main.json")
 
       assert(paths.config == File.join(Dir.current, "tg", "main.json"))
-    end
-
-    test "Paths#binary_directories lists the root and each directory below it down to the binary's" do
-      paths = Install::Paths.default
-      nested = Install::Paths.new(binary: "/a/b/c/bin", plist: "/p", config: "/c", log: "/l", root: "/a")
-      outside = Install::Paths.new(binary: "/x/bin", plist: "/p", config: "/c", log: "/l", root: "/a")
-
-      assert(paths.binary_directories == ["/usr/local", "/usr/local/libexec"])
-      assert(nested.binary_directories == ["/a", "/a/b", "/a/b/c"])
-      assert(raised(ArgumentError) { outside.binary_directories }.message == "/x/bin is not below /a")
     end
   {% end %}
 end

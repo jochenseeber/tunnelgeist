@@ -19,6 +19,7 @@ colonless
 colour
 controllen
 copyfile
+creat
 ctliocginfo
 ctrunc
 datagram
@@ -52,6 +53,7 @@ esrch
 euid
 extattributes
 fchmod
+fchown
 fcntl
 fdopendir
 filesec
@@ -103,6 +105,7 @@ librar
 malloc
 mcpls
 microtest
+mkdirat
 mkfifo
 msghdr
 namelen
@@ -143,6 +146,7 @@ readextattr
 readsecurity
 realpath
 recvmsg
+renameat
 rewinddir
 rindex
 rlim
@@ -169,6 +173,7 @@ teamid
 tunnelgeist
 uids
 unistd
+unlinkat
 unpadded
 unshift
 urlsafe
@@ -176,6 +181,7 @@ userspace
 utun
 wnohang
 writeattr
+wronly
 xcrun
 xffff
 xsecurity

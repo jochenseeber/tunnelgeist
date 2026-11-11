@@ -6,10 +6,12 @@ require "./file_status"
 
 module Tunnelgeist
   # What makes a configuration file and every directory above it
-  # trustworthy (CC2): the daemon reads them as root, so anything another
-  # user could write, or replace, would let that user widen what root
-  # does. Each method returns why the object is refused, nil when it is
-  # not; `TrustedDirectory` applies them to what it opens.
+  # trustworthy (CC2): the daemon reads them as root, and `install` writes
+  # the daemon, its configuration and its property list into such
+  # directories as root, so anything another user could write, or replace,
+  # would let that user widen what root does. Each method returns why the
+  # object is refused, nil when it is not; `TrustedDirectory` applies them
+  # to what it opens.
   module TrustPolicy
     # The permission bits that let someone other than the owner write.
     WRITABLE_BY_OTHERS = 0o022_u16
@@ -25,9 +27,9 @@ module Tunnelgeist
     ACL_READ_ONLY = AclPermissions::ReadData | AclPermissions::Execute | AclPermissions::ReadAttributes |
                     AclPermissions::ReadExtattributes | AclPermissions::ReadSecurity | AclPermissions::Synchronize
 
-    # Why a directory with *status* may not lead to a configuration file:
-    # it must be a directory owned by root or *owner*, the trusted user
-    # besides root, that no one else may write.
+    # Why a directory with *status* may not lead to a configuration file
+    # or hold what `install` writes: it must be a directory owned by root or
+    # *owner*, the trusted user besides root, that no one else may write.
     def self.directory_problem(status : FileStatus, *, owner : UInt32) : String?
       if !status.type.directory?
         "must be a directory"

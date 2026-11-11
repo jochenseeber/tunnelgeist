@@ -199,8 +199,9 @@ the daemon needs, and no library file requires any of these:
   `cli/options` reads each command's options, the `cli/flag` values it takes,
   and `cli/listener` holds the socket `serve` listens on with its path, which
   `cli/socket_path` reads back from a socket launchd passed. `install/paths`
-  says where `install` writes, and `install/starter` builds the starter
-  configuration it writes when there is none.
+  says where `install` writes, `install/writer` checks those directories and
+  creates and writes there through `trusted_directory`, and `install/starter`
+  builds the starter configuration it writes when there is none.
 - `server`, `handler`, `registry`, `departure_watcher` (with its bindings in
   `departure_watcher/lib_kernel_event`), `command_runner` (with
   `inherited_descriptors`): the accept loop, the request handler, the registry
@@ -233,13 +234,14 @@ the daemon needs, and no library file requires any of these:
   and Security, so only the daemon does; a program that uses the client or
   `Device` links none of them.
 - `checked_directory`, `trusted_directory`, `trust_policy`: the directories the
-  daemon trusts. `checked_directory` is a checked directory the configuration
-  loader reads each file through (with `checked_directory/refusal`, its error
-  naming the path it refused and why, and `checked_directory/missing`, the one
-  for a name that does not exist), and `trusted_directory` the one the daemon
-  uses, which opens each directory and file through checked descriptors from
-  `/` down (with its bindings in `lib_directory` and `lib_acl`). `trust_policy`
-  decides what passes from a `file_status` and the `acl_entry`s with their
+  daemon trusts. `checked_directory` is a checked directory, which the
+  configuration loader reads each file through and `install` writes each file
+  through (with `checked_directory/refusal`, its error naming the path it
+  refused and why, and `checked_directory/missing`, the one for a name that
+  does not exist), and `trusted_directory` the one the daemon uses, which opens
+  each directory and file through checked descriptors from `/` down (with its
+  bindings in `lib_directory` and `lib_acl`). `trust_policy` decides what
+  passes from a `file_status` and the `acl_entry`s with their
   `acl_permissions`, and `trusted_file` is the text read with its path.
 
 `family` belongs to the library: `address`, `prefix` and `commands` require it.

@@ -1,8 +1,8 @@
 {% skip_file unless flag?(:darwin) %}
 
-require "random/secure"
 require "system/group"
 require "xml"
+require "./checked_directory/refusal"
 require "./command_runner"
 require "./config"
 require "./config/error"
@@ -10,6 +10,7 @@ require "./install/failure"
 require "./install/owner"
 require "./install/paths"
 require "./install/starter"
+require "./install/writer"
 require "./lib_system"
 require "./protocol/common"
 
@@ -48,6 +49,7 @@ module Tunnelgeist
                    @find_group : String -> UInt32? = ->(name : String) : UInt32? { System::Group.find_by?(name: name).try(&.id.to_u32) },
                    @lint : String -> String? = ->(xml : String) : String? { Install.lint(xml) },
                    @load_config : String -> Config = ->(path : String) { Config.load(path) })
+      @writer = Writer.new(@owner)
     end
 
     # The LaunchDaemon property list (UA9): the label, the program and its
@@ -120,7 +122,7 @@ module Tunnelgeist
       activate(xml, socket: config.socket, output: output)
       print_group_hint(group: config.group, sudo_user: sudo_user, output: output)
       0
-    rescue ex : Failure | Config::Error | ArgumentError | IO::Error | File::Error
+    rescue ex : Failure | CheckedDirectory::Refusal | Config::Error | ArgumentError | IO::Error | File::Error
       error.puts "tunnelgeist: #{ex.message}"
       1
     end
@@ -132,8 +134,7 @@ module Tunnelgeist
     # anything replaces or unloads the working daemon.
     private def prepare_config(*, group : String, output : IO) : Config
       ensure_group(group, output: output)
-      make_directory(@paths.config_directory)
-      make_directory(@paths.clients_directory)
+      @writer.make_directories(@paths.clients_directory)
       write_starter(group: group, output: output)
       @load_config.call(@paths.config)
     end
@@ -142,7 +143,7 @@ module Tunnelgeist
     # a broken link, is at the main file's path: an operator's
     # configuration is never replaced.
     private def write_starter(*, group : String, output : IO) : Nil
-      if File.info?(@paths.config, follow_symlinks: false)
+      if @writer.exists?(@paths.config)
         output.puts "kept #{@paths.config}"
       else
         write_file(@paths.config, content: Starter.json(socket: Protocol::DEFAULT_SOCKET, group: group), mode: 0o644)
@@ -228,9 +229,9 @@ module Tunnelgeist
       source = @executable
       raise Failure.new("cannot find the running executable") unless source
 
-      make_directory(File.dirname(@paths.binary))
+      @writer.make_directories(File.dirname(@paths.binary))
       open_executable(source) do |executable|
-        replace(@paths.binary, mode: 0o755) { |file| IO.copy(executable, file) }
+        @writer.write(@paths.binary, mode: 0o755) { |file| IO.copy(executable, file) }
       end
     end
 
@@ -258,132 +259,19 @@ module Tunnelgeist
 
     # Checks every directory install writes in or creates directories in,
     # before it creates the group or writes anything, so a refusal leaves
-    # nothing behind: install writes there as root, and a user who may
-    # write one of them, or a directory above one, could swap what install
-    # writes for a link. Existing directories are refused, never changed.
-    #
-    # For the binary (UC3) that is every existing directory from the root
-    # of `Paths` down to the binary's; for the configuration, the
-    # configuration directory and an existing `clients.d`; and for both,
-    # the nearest existing directory and every directory above it up to
-    # `/`, which `check_ancestors` checks.
+    # nothing behind: the walk from `/` down to the binary's directory and
+    # to `clients.d` as far as they exist, and to the property list's
+    # directory, which must exist. Existing directories are refused, never
+    # changed. A missing directory is created later in the last one the walk
+    # checked.
     private def check_directories : Nil
-      @paths.binary_directories.each do |directory|
-        check_directory(directory) if File.info?(directory, follow_symlinks: false)
-      end
-      check_tree(File.dirname(@paths.binary))
-      check_tree(@paths.config_directory)
-      clients = @paths.clients_directory
-      check_directory(clients) if File.info?(clients, follow_symlinks: false)
-    end
-
-    # Checks *path*, or the nearest existing directory above it that
-    # `make_directory` would create it in, with `check_directory`, and the
-    # directories above that with `check_ancestors`.
-    private def check_tree(path : String) : Nil
-      existing = existing_ancestor(path)
-      check_directory(existing)
-      check_ancestors(existing)
-    end
-
-    # Raises unless each directory above *path* up to `/` is a directory,
-    # not a symbolic link, owned by root or the owner and writable by no
-    # one else: whoever may write one could rename *path* away and put
-    # their own directory in its place.
-    private def check_ancestors(path : String) : Nil
-      current = path
-      loop do
-        parent = File.dirname(current)
-        break if parent == current
-
-        check_directory(parent, owners: {0_u32, @owner.uid})
-        current = parent
-      end
-    end
-
-    # *path* when something is there, else the nearest existing directory
-    # above it.
-    private def existing_ancestor(path : String) : String
-      existing = path
-      until File.info?(existing, follow_symlinks: false)
-        existing = File.dirname(existing)
-      end
-      existing
-    end
-
-    # Creates *path*, and its missing parents first, mode 0755 and owned by
-    # the owner (root:wheel for a real installation). An existing directory
-    # is left as it is; `check_directories` has refused one that is not
-    # safe to write in.
-    private def make_directory(path : String) : Nil
-      return if File.info?(path, follow_symlinks: false)
-
-      make_directory(File.dirname(path))
-      Dir.mkdir(path, 0o755)
-      made = File.info(path, follow_symlinks: false)
-      unless made.directory? && made.owner_id == LibSystem.geteuid.to_s
-        raise Failure.new("#{path} is not the directory install created")
-      end
-      File.chown(path, @owner.uid.to_i, @owner.gid.to_i, follow_symlinks: false)
-      change_mode(path, mode: 0o755)
-    end
-
-    # Raises unless *path* is a directory, not a symbolic link, owned by
-    # the owner, root for a real installation, that no one else may write:
-    # otherwise another user could swap what install writes there (UC3).
-    # The message names *path* and what is wrong with it.
-    # *owners* are the uids that may own it.
-    private def check_directory(path : String, *, owners : Enumerable(UInt32) = {@owner.uid}) : Nil
-      problem = directory_problem(File.info(path, follow_symlinks: false), owners: owners)
-      if problem
-        raise Failure.new("#{path} must be a directory owned by root and writable only by root: #{problem}")
-      end
-    end
-
-    # What keeps the directory *info* describes from being safe to write
-    # in, nil when nothing does; *owners* are the uids that may own it.
-    private def directory_problem(info : File::Info, *, owners : Enumerable(UInt32)) : String?
-      if info.symlink?
-        "it is a symbolic link"
-      elsif !info.directory?
-        "it is not a directory"
-      elsif !owners.any? { |uid| info.owner_id == uid.to_s }
-        "it is owned by uid #{info.owner_id}"
-      elsif info.permissions.group_write? || info.permissions.other_write?
-        "its mode is #{"%04o" % info.permissions.value}"
-      end
-    end
-
-    # Sets the mode of *path* without following a symbolic link there.
-    private def change_mode(path : String, *, mode : Int32) : Nil
-      if LibSystem.lchmod(path, mode) != 0
-        raise File::Error.from_errno("lchmod", file: path)
-      end
+      @writer.check(File.dirname(@paths.binary))
+      @writer.check(@paths.clients_directory)
+      @writer.check_existing(File.dirname(@paths.plist))
     end
 
     private def write_file(path : String, *, content : String, mode : Int32) : Nil
-      replace(path, mode: mode, &.print(content))
-    end
-
-    # Writes *path* through a temporary file beside it that the block
-    # fills, then sets *mode* and the owner (root:wheel for a real
-    # installation), and renames it over *path*. The temporary file is
-    # created mode 0600, so no one else can read it before *mode* is set.
-    # The binary and the configuration go into directories that passed
-    # `check_directory`, so no one else can put a link at the temporary
-    # path for the block to write through, or a file at *path* for the
-    # rename to replace.
-    private def replace(path : String, *, mode : Int32, & : IO ->) : Nil
-      temporary = "#{path}.#{Random::Secure.hex(8)}.tmp"
-      begin
-        File.open(temporary, "wb", perm: 0o600) { |file| yield file }
-        File.chown(temporary, @owner.uid.to_i, @owner.gid.to_i, follow_symlinks: false)
-        change_mode(temporary, mode: mode)
-        File.rename(temporary, path)
-      rescue error
-        File.delete?(temporary)
-        raise error
-      end
+      @writer.write(path, mode: mode, &.print(content))
     end
 
     # Unloads the daemon. A failure does not stop `install` or `uninstall`,

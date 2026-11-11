@@ -10,11 +10,13 @@ require "./support/temporary_directory"
 
 # `install` as root against a temporary directory with a recording runner,
 # and the property list checked by the system's `plutil`. Before it writes
-# anything, `install` checks every directory above the ones it writes in up
-# to `/`, so these tests depend on the real directories above the temporary
-# directory: its ancestors must be owned by root or the user and writable by
-# no one else, as macOS's per-user `$TMPDIR` below `/private/var/folders` is.
-# The real configuration loader asks the system for the group `staff`.
+# anything, `install` walks every directory from `/` down to the ones it
+# writes in, so these tests depend on the real directories above the
+# temporary directory: they must be owned by root or the user, writable by no
+# one else and grant no one else write access through an ACL, as macOS's
+# per-user `$TMPDIR` below `/private/var/folders` does. ACLs are set with
+# `/bin/chmod +a`. The real configuration loader asks the system for the
+# group `staff`.
 describe TunnelgeistInstall do
   {% if flag?(:darwin) %}
     alias Install = Tunnelgeist::Install
@@ -79,27 +81,29 @@ describe TunnelgeistInstall do
     end
 
     # A temporary installation layout: a fresh temporary directory with mode
-    # 0755, *root* with mode 0755 below it, the binary below that, the
-    # property list in a directory of its own, the configuration two missing
-    # directories down, the socket the configuration names, and a file
-    # standing in for the running executable.
+    # 0755, `usr` with mode 0755 below it, the binary one missing directory
+    # below that, the property list in a directory of its own, the
+    # configuration two missing directories down, the socket the
+    # configuration names, and a file standing in for the running
+    # executable.
     class Layout
       getter directory : String
       getter paths : Install::Paths
       getter socket : String
       getter executable : String
+      # The existing directory the binary's directory is created in.
+      getter usr : String
 
       def initialize
         @directory = TunnelgeistTemporaryDirectory.create_temporary_directory
-        root = File.join(@directory, "usr")
-        Dir.mkdir_p(root, 0o755)
+        @usr = File.join(@directory, "usr")
+        Dir.mkdir_p(@usr, 0o755)
         File.chmod(@directory, 0o755)
-        File.chmod(root, 0o755)
+        File.chmod(@usr, 0o755)
         Dir.mkdir_p(File.join(@directory, "LaunchDaemons"), 0o755)
-        @paths = Install::Paths.new(binary: File.join(root, "libexec", "tunnelgeist"),
+        @paths = Install::Paths.new(binary: File.join(@usr, "libexec", "tunnelgeist"),
           plist: File.join(@directory, "LaunchDaemons", "daemon.plist"),
-          config: File.join(@directory, "etc", "tunnelgeist", "config.json"), log: File.join(@directory, "t.log"),
-          root: root)
+          config: File.join(@directory, "etc", "tunnelgeist", "config.json"), log: File.join(@directory, "t.log"))
         @socket = File.join(@directory, "t.sock")
         @executable = File.join(@directory, "executable")
         File.write(@executable, "the daemon")
@@ -256,10 +260,68 @@ describe TunnelgeistInstall do
       end
     end
 
-    # The text `install` reports for a directory *path* it refuses, for
-    # *reason*.
+    # The text `install` reports for a directory *path* the walk refuses,
+    # for *reason*.
     def refused_directory(path : String, *, reason : String) : String
-      "tunnelgeist: #{path} must be a directory owned by root and writable only by root: #{reason}\n"
+      "tunnelgeist: #{path}: #{reason}\n"
+    end
+
+    # Why the walk refuses a directory of *mode*.
+    def mode_reason(mode : Int32) : String
+      "directory must be writable only by its owner, not mode #{"%04o" % mode}"
+    end
+
+    # Why the walk refuses a directory whose ACL lets someone else write.
+    ACL_REASON = "grants write access through its ACL"
+
+    # Adds the ACL entry *entry* to *path* with `chmod +a`.
+    def add_acl(path : String, *, entry : String) : Nil
+      status = Process.run("/bin/chmod", ["+a", entry, path], error: Process::Redirect::Inherit)
+      raise "chmod +a #{entry.inspect} #{path} failed" unless status.success?
+    end
+
+    # Removes every ACL entry of *path* with `chmod -N`.
+    def remove_acl(path : String) : Nil
+      status = Process.run("/bin/chmod", ["-N", path], error: Process::Redirect::Inherit)
+      raise "chmod -N #{path} failed" unless status.success?
+    end
+
+    # Creates the directory *path*, mode 0755, below a parent whose ACL
+    # lets everyone add files and passes that entry on, then removes the
+    # parent's own entries, so only *path* carries the entry, inherited.
+    def make_inheriting(path : String) : Nil
+      parent = File.dirname(path)
+      Dir.mkdir_p(parent, 0o755)
+      File.chmod(parent, 0o755)
+      add_acl(parent, entry: "everyone allow add_file,file_inherit,directory_inherit")
+      Dir.mkdir(path, 0o755)
+      File.chmod(path, 0o755)
+      remove_acl(parent)
+    end
+
+    # The first directory from `/` down to *path* that *uid* owns.
+    def first_owned(path : String, *, uid : UInt32) : String
+      current = ""
+      path.split('/').reject!(&.empty?).each do |name|
+        current = "#{current}/#{name}"
+        return current if File.info(current, follow_symlinks: false).owner_id == uid.to_s
+      end
+      raise "#{uid} owns no directory down to #{path}"
+    end
+
+    # Asserts that *outcome* is the refusal *message*, before `install`
+    # created the group, loaded anything, ran anything or wrote the binary,
+    # the configuration or the property list.
+    def assert_refused_before_any_change(outcome : Outcome, *, layout : Layout, recorder : Recorder, loads : Loads,
+                                         message : String) : Nil
+      assert(outcome.status == 1)
+      assert(outcome.error == message)
+      assert(outcome.output.empty?)
+      assert(recorder.calls.empty?)
+      assert(loads.paths.empty?)
+      assert(!File.exists?(layout.paths.binary))
+      assert(!File.exists?(layout.paths.config))
+      assert(!File.exists?(layout.paths.plist))
     end
 
     # An `Install` for *layout* whose group is missing and whose loader
@@ -288,7 +350,7 @@ describe TunnelgeistInstall do
 
     test "plist with the XML special characters in its paths passes plutil -lint" do
       paths = Install::Paths.new(binary: "/opt/a & b <x>/tunnelgeist", plist: "/tmp/tg.plist", config: "/tmp/tg.json",
-        log: "/tmp/tg.log", root: "/opt")
+        log: "/tmp/tg.log")
       xml = Install.new(paths: paths).plist(config_path: "/tmp/a & b.json", socket: "/tmp/<tg>.sock", group_gid: 20_u32)
 
       assert(lints?(xml))
@@ -463,7 +525,7 @@ describe TunnelgeistInstall do
         outcome = install(checking_installer(layout, recorder: recorder, loads: load_config))
 
         assert(outcome.status == 1)
-        assert(outcome.error == refused_directory(layout.paths.config_directory, reason: "its mode is 0775"))
+        assert(outcome.error == refused_directory(layout.paths.config_directory, reason: mode_reason(0o775)))
         assert(outcome.output.empty?)
         assert(File.info(layout.paths.config_directory).permissions.value == 0o775)
         assert(Dir.children(layout.paths.config_directory).empty?)
@@ -485,7 +547,8 @@ describe TunnelgeistInstall do
         outcome = install(checking_installer(layout, recorder: recorder, loads: load_config))
 
         assert(outcome.status == 1)
-        assert(outcome.error == refused_directory(layout.paths.config_directory, reason: "it is a symbolic link"))
+        assert(outcome.error == refused_directory(layout.paths.config_directory,
+          reason: "must be a directory, not a symbolic link"))
         assert(outcome.output.empty?)
         assert(Dir.children(target).empty?)
         assert(recorder.calls.empty?)
@@ -502,7 +565,7 @@ describe TunnelgeistInstall do
         outcome = install(checking_installer(layout, recorder: recorder, loads: load_config))
 
         assert(outcome.status == 1)
-        assert(outcome.error == refused_directory(layout.paths.clients_directory, reason: "it is not a directory"))
+        assert(outcome.error == refused_directory(layout.paths.clients_directory, reason: "must be a directory"))
         assert(!File.exists?(layout.paths.config))
         assert(recorder.calls.empty?)
         assert(load_config.paths.empty?)
@@ -518,7 +581,8 @@ describe TunnelgeistInstall do
         outcome = install(installer(layout, recorder: Recorder.new { succeeded }))
 
         assert(outcome.status == 1)
-        assert(outcome.error == refused_directory(layout.paths.clients_directory, reason: "it is a symbolic link"))
+        assert(outcome.error == refused_directory(layout.paths.clients_directory,
+          reason: "must be a directory, not a symbolic link"))
         assert(!File.exists?(layout.paths.config))
       end
     end
@@ -533,7 +597,7 @@ describe TunnelgeistInstall do
         outcome = install(checking_installer(layout, recorder: recorder, loads: load_config))
 
         assert(outcome.status == 1)
-        assert(outcome.error == refused_directory(parent, reason: "its mode is 0775"))
+        assert(outcome.error == refused_directory(parent, reason: mode_reason(0o775)))
         assert(!File.exists?(layout.paths.config_directory))
         assert(recorder.calls.empty?)
         assert(load_config.paths.empty?)
@@ -551,7 +615,7 @@ describe TunnelgeistInstall do
         outcome = install(checking_installer(layout, recorder: recorder, loads: load_config))
 
         assert(outcome.status == 1)
-        assert(outcome.error == refused_directory(parent, reason: "its mode is 0777"))
+        assert(outcome.error == refused_directory(parent, reason: mode_reason(0o777)))
         assert(outcome.output.empty?)
         assert(Dir.children(layout.paths.config_directory).empty?)
         assert(recorder.calls.empty?)
@@ -568,22 +632,24 @@ describe TunnelgeistInstall do
 
         assert(outcome.status == 1)
         assert(outcome.error == refused_directory(File.dirname(layout.paths.config_directory),
-          reason: "it is a symbolic link"))
+          reason: "must be a directory, not a symbolic link"))
         assert(Dir.children(File.join(target, "tunnelgeist")).empty?)
       end
     end
 
-    test "install refuses directories owned by someone else, the binary root first" do
+    test "install refuses the first directory from / down that someone else owns" do
       with_layout do |layout|
         Dir.mkdir_p(layout.paths.config_directory, 0o755)
-        other = Install::Owner.new(uid: layout.owner.uid + 1, gid: layout.owner.gid)
+        uid = layout.owner.uid
+        other = Install::Owner.new(uid: uid + 1, gid: layout.owner.gid)
         installer = Install.new(run: Recorder.new { succeeded }.run, effective_uid: -> { 0_u32 }, paths: layout.paths,
           owner: other, executable: layout.executable, find_group: ->(_name : String) : UInt32? { 20_u32 },
           lint: ->(_xml : String) : String? { nil }, load_config: loads(layout).load)
         outcome = install(installer)
 
         assert(outcome.status == 1)
-        assert(outcome.error == refused_directory(layout.paths.root, reason: "it is owned by uid #{layout.owner.uid}"))
+        assert(outcome.error == refused_directory(first_owned(layout.directory, uid: uid),
+          reason: "directory must be owned by root or uid #{uid + 1}, not uid #{uid}"))
         assert(Dir.children(layout.paths.config_directory).empty?)
       end
     end
@@ -738,15 +804,15 @@ describe TunnelgeistInstall do
       end
     end
 
-    test "install refuses a binary directory others may write before it changes anything" do
+    test "install refuses the directory the binary's directory goes in when others may write it" do
       with_layout do |layout|
-        File.chmod(layout.paths.root, 0o775)
+        File.chmod(layout.usr, 0o775)
         recorder = Recorder.new { succeeded }
         load_config = loads(layout)
         outcome = install(checking_installer(layout, recorder: recorder, loads: load_config))
 
         assert(outcome.status == 1)
-        assert(outcome.error == refused_directory(layout.paths.root, reason: "its mode is 0775"))
+        assert(outcome.error == refused_directory(layout.usr, reason: mode_reason(0o775)))
         assert(outcome.output.empty?)
         assert(recorder.calls.empty?)
         assert(load_config.paths.empty?)
@@ -755,14 +821,14 @@ describe TunnelgeistInstall do
       end
     end
 
-    test "install refuses a directory below the binary root that others may write" do
+    test "install refuses the binary's directory when others may write it" do
       with_layout do |layout|
         Dir.mkdir_p(File.dirname(layout.paths.binary), 0o755)
         File.chmod(File.dirname(layout.paths.binary), 0o777)
         outcome = install(installer(layout, recorder: Recorder.new { succeeded }))
 
         assert(outcome.status == 1)
-        assert(outcome.error == refused_directory(File.dirname(layout.paths.binary), reason: "its mode is 0777"))
+        assert(outcome.error == refused_directory(File.dirname(layout.paths.binary), reason: mode_reason(0o777)))
         assert(!File.exists?(layout.paths.config))
       end
     end
@@ -775,6 +841,173 @@ describe TunnelgeistInstall do
         assert(outcome.status == 0)
         assert(info.permissions.value == 0o755)
         assert(info.owner_id == layout.owner.uid.to_s)
+      end
+    end
+    test "install refuses a configuration directory whose ACL lets everyone add files before it changes anything" do
+      with_layout do |layout|
+        Dir.mkdir_p(layout.paths.config_directory, 0o755)
+        add_acl(layout.paths.config_directory, entry: "everyone allow add_file")
+        recorder = Recorder.new { succeeded }
+        load_config = loads(layout)
+        outcome = install(checking_installer(layout, recorder: recorder, loads: load_config))
+
+        assert_refused_before_any_change(outcome, layout: layout, recorder: recorder, loads: load_config,
+          message: refused_directory(layout.paths.config_directory, reason: ACL_REASON))
+        assert(Dir.children(layout.paths.config_directory).empty?)
+      end
+    end
+
+    test "install refuses a configuration directory that inherited an ACL entry letting everyone add files" do
+      with_layout do |layout|
+        make_inheriting(layout.paths.config_directory)
+        recorder = Recorder.new { succeeded }
+        load_config = loads(layout)
+        outcome = install(checking_installer(layout, recorder: recorder, loads: load_config))
+
+        assert_refused_before_any_change(outcome, layout: layout, recorder: recorder, loads: load_config,
+          message: refused_directory(layout.paths.config_directory, reason: ACL_REASON))
+        assert(Dir.children(layout.paths.config_directory).empty?)
+      end
+    end
+
+    test "install refuses the binary's directory whose ACL lets everyone add files before it changes anything" do
+      with_layout do |layout|
+        libexec = File.dirname(layout.paths.binary)
+        Dir.mkdir(libexec, 0o755)
+        File.chmod(libexec, 0o755)
+        add_acl(libexec, entry: "everyone allow add_file,delete_child")
+        recorder = Recorder.new { succeeded }
+        load_config = loads(layout)
+        outcome = install(checking_installer(layout, recorder: recorder, loads: load_config))
+
+        assert_refused_before_any_change(outcome, layout: layout, recorder: recorder, loads: load_config,
+          message: refused_directory(libexec, reason: ACL_REASON))
+        assert(Dir.children(libexec).empty?)
+        assert(!File.exists?(layout.paths.config_directory))
+      end
+    end
+
+    test "install refuses the binary's directory that inherited an ACL entry letting everyone add files" do
+      with_layout do |layout|
+        libexec = File.dirname(layout.paths.binary)
+        make_inheriting(libexec)
+        recorder = Recorder.new { succeeded }
+        load_config = loads(layout)
+        outcome = install(checking_installer(layout, recorder: recorder, loads: load_config))
+
+        assert_refused_before_any_change(outcome, layout: layout, recorder: recorder, loads: load_config,
+          message: refused_directory(libexec, reason: ACL_REASON))
+        assert(Dir.children(libexec).empty?)
+      end
+    end
+
+    test "install refuses the directory it would create the configuration directory in when its ACL lets others write" do
+      with_layout do |layout|
+        parent = File.dirname(layout.paths.config_directory)
+        Dir.mkdir(parent, 0o755)
+        File.chmod(parent, 0o755)
+        add_acl(parent, entry: "everyone allow add_subdirectory")
+        recorder = Recorder.new { succeeded }
+        load_config = loads(layout)
+        outcome = install(checking_installer(layout, recorder: recorder, loads: load_config))
+
+        assert_refused_before_any_change(outcome, layout: layout, recorder: recorder, loads: load_config,
+          message: refused_directory(parent, reason: ACL_REASON))
+        assert(Dir.children(parent).empty?)
+      end
+    end
+
+    test "install accepts directories whose ACLs grant only reading or deny writing" do
+      with_layout do |layout|
+        parent = File.dirname(layout.paths.config_directory)
+        Dir.mkdir(parent, 0o755)
+        File.chmod(parent, 0o755)
+        add_acl(parent, entry: "everyone allow list,search,readattr,file_inherit,directory_inherit")
+        add_acl(layout.usr, entry: "everyone deny add_file,delete_child")
+        outcome = install(installer(layout, recorder: Recorder.new { succeeded }))
+
+        assert(outcome.status == 0)
+        assert(outcome.error.empty?)
+        assert(File.exists?(layout.paths.config))
+        assert(File.exists?(layout.paths.binary))
+      end
+    end
+
+    test "install creates each missing directory in the one above it, mode 0755, with the owner" do
+      with_layout do |layout|
+        parent = File.dirname(layout.paths.config_directory)
+        Dir.mkdir(parent, 0o755)
+        File.chmod(parent, 0o755)
+        outcome = with_umask(0o077) { install(installer(layout, recorder: Recorder.new { succeeded })) }
+
+        assert(outcome.status == 0)
+        assert(Dir.children(parent) == ["tunnelgeist"])
+        [layout.paths.config_directory, layout.paths.clients_directory, File.dirname(layout.paths.binary)].each do |path|
+          info = File.info(path, follow_symlinks: false)
+          assert(info.directory?)
+          assert(info.permissions.value == 0o755)
+          assert(info.owner_id == layout.owner.uid.to_s)
+          assert(info.group_id == layout.owner.gid.to_s)
+        end
+      end
+    end
+
+    test "install refuses a property list directory others may write before it changes anything" do
+      with_layout do |layout|
+        plist_directory = File.dirname(layout.paths.plist)
+        File.chmod(plist_directory, 0o777)
+        recorder = Recorder.new { succeeded }
+        load_config = loads(layout)
+        outcome = install(checking_installer(layout, recorder: recorder, loads: load_config))
+
+        assert_refused_before_any_change(outcome, layout: layout, recorder: recorder, loads: load_config,
+          message: refused_directory(plist_directory, reason: mode_reason(0o777)))
+      end
+    end
+
+    test "install refuses a missing property list directory before it changes anything" do
+      with_layout do |layout|
+        plist_directory = File.dirname(layout.paths.plist)
+        Dir.delete(plist_directory)
+        recorder = Recorder.new { succeeded }
+        load_config = loads(layout)
+        outcome = install(checking_installer(layout, recorder: recorder, loads: load_config))
+
+        assert_refused_before_any_change(outcome, layout: layout, recorder: recorder, loads: load_config,
+          message: refused_directory(plist_directory, reason: "does not exist"))
+        assert(!File.exists?(plist_directory))
+      end
+    end
+
+    test "install writes the binary, the starter and the property list without leaving a temporary file" do
+      with_layout do |layout|
+        outcome = install(installer(layout, recorder: Recorder.new { succeeded }))
+
+        assert(outcome.status == 0)
+        assert(Dir.children(File.dirname(layout.paths.binary)) == ["tunnelgeist"])
+        assert(Dir.children(layout.paths.config_directory).sort! == ["clients.d", "config.json"])
+        assert(Dir.children(File.dirname(layout.paths.plist)) == ["daemon.plist"])
+        info = File.info(layout.paths.binary, follow_symlinks: false)
+        assert(info.permissions.value == 0o755)
+        assert(info.owner_id == layout.owner.uid.to_s)
+        assert(info.group_id == layout.owner.gid.to_s)
+      end
+    end
+
+    test "install removes the temporary file when it cannot rename it over the binary" do
+      with_layout do |layout|
+        Dir.mkdir_p(layout.paths.binary, 0o755)
+        File.chmod(File.dirname(layout.paths.binary), 0o755)
+        recorder = Recorder.new { succeeded }
+        outcome = install(installer(layout, recorder: recorder))
+
+        assert(outcome.status == 1)
+        assert(outcome.error.starts_with?("tunnelgeist: "))
+        assert(outcome.error.includes?(layout.paths.binary))
+        assert(outcome.lines == ["wrote #{layout.paths.config}"])
+        assert(recorder.calls.empty?)
+        assert(Dir.children(File.dirname(layout.paths.binary)) == ["tunnelgeist"])
+        assert(Dir.exists?(layout.paths.binary))
       end
     end
   {% end %}
